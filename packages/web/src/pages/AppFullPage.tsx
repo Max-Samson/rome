@@ -5,6 +5,7 @@ import { AppAccessPanel } from "@/components/app-access-panel";
 import { RomeAppHost } from "@/components/rome-app-host";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { useRecordAppOpened } from "@/hooks/use-recent-apps";
 import { useTheme } from "@/hooks/use-theme";
 import { getActiveLocale } from "@/i18n";
 
@@ -67,6 +68,15 @@ export default function AppFullPage() {
       cancelled = true;
     };
   }, [appId, splat, t]);
+
+  // Only a top-level visit counts as the guardian opening the app. Split view
+  // mounts this same page inside an iframe for every tile of a restored chat
+  // layout, and those mounts are the layout coming back, not a choice — letting
+  // them count would reorder the sidebar's Recent zone on every session visit.
+  // Guardian only, as in AppEmbeddedPage.
+  const isGuardian = manifest?.bootstrap.caller?.kind === "guardian";
+  const isTopLevel = typeof window !== "undefined" && window.self === window.top;
+  useRecordAppOpened(appId, isGuardian && isTopLevel);
 
   if (error) {
     return (
