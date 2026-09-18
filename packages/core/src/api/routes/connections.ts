@@ -118,7 +118,8 @@ function buildConnectionView(
   records: Map<GrantName, GrantRecord>,
   manager: SetupManager | null,
 ): ConnectionView {
-  const revive = registry.getDescriptor(conn.service)?.reviveProfile;
+  const descriptor = registry.getDescriptor(conn.service);
+  const revive = descriptor?.reviveProfile;
   const grants = conn.auth.grants();
 
   const display: Record<GrantName, GrantDisplayView | null> = {};
@@ -142,7 +143,7 @@ function buildConnectionView(
     grants,
     display,
     capabilities: conn.status(),
-    connect: connectHint(conn.service),
+    connect: descriptor ? connectHint(conn.service) : null,
     setups: activeSetups(manager, conn.id, Object.keys(grants)),
   };
 }
