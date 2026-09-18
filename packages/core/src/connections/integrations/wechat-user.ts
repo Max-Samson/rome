@@ -16,13 +16,6 @@
 // (which chats exist) and `history` (what was said), both live queries against
 // the client's own store.
 //
-// Conferral is observational and physical. The guardian opens Rome's desktop,
-// scans the QR with their phone, and confirms the login there — the same
-// desktop surface LinkedIn's setup uses. Recovering the store key needs ptrace
-// on the live client, which this container cannot do, so that one step runs as
-// a root script on the hosting VM (channels/wechat-user-keys.ts) and hands back
-// only the passphrase; Rome derives the per-database keys back here.
-//
 // Fault mapping: a reader that reports the account signed out, or a key that no
 // longer fits, is terminal (CredentialRejected → the grant degrades → the
 // guardian reconnects). A reader that merely fails to run is runtime
@@ -434,9 +427,12 @@ export function createWechatUserDescriptor(
   const reader = new WechatUserReader(runtime);
 
   const recoverPassphrase = async (signal: AbortSignal): Promise<string> => {
-    const driverDir = await stageCaptureDriver();
+    const driverDir = await stageCaptureDriver(runtime.runtimeDir);
     try {
-      return await recoverWechatPassphrase({ driverDir, home: runtime.home }, signal);
+      return await recoverWechatPassphrase(
+        { driverDir, home: runtime.home, runtimeDir: runtime.runtimeDir },
+        signal,
+      );
     } finally {
       await rm(driverDir, { recursive: true, force: true });
     }
