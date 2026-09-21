@@ -100,6 +100,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm fetch \
     --filter @rome/core... \
     --filter @rome/discord-cli... \
+    --filter @rome-os/node... \
     --filter rome-web... \
     --filter @rome-os/app-web-sdk... \
     --filter @rome-os/app-runtime... \
@@ -126,6 +127,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --prefer-offline --frozen-lockfile \
     --filter @rome/core... \
     --filter @rome/discord-cli... \
+    --filter @rome-os/node... \
     --filter rome-web... \
     --filter @rome-os/app-web-sdk... \
     --filter @rome-os/app-runtime... \
@@ -340,6 +342,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Agent-facing Discord REST CLI. /app is populated from /opt/rome by the
 # entrypoint; the package launcher always loads its compiled dist entrypoint.
 RUN ln -sf /app/packages/discord-cli/bin/discord.js /usr/local/bin/discord
+RUN ln -sf /app/packages/rome-node/bin/rome-node.js /usr/local/bin/rome-node
 
 # Chrome/CDP launcher assets
 RUN chmod +x /opt/rome/scripts/docker/rome-start-chrome-cdp.sh /opt/rome/scripts/docker/rome-apply-cdp-stealth.sh
