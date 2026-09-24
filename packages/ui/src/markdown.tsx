@@ -14,6 +14,7 @@ import { Streamdown, type Components, type MermaidOptions, type StreamdownProps 
 import { cn } from "./cn.js";
 
 export type { Components, MermaidConfig, MermaidOptions, StreamdownProps };
+export { defaultUrlTransform } from "streamdown";
 
 export const MARKDOWN_LINK_CLASS = "wrap-anywhere text-primary underline";
 
@@ -131,6 +132,7 @@ export interface MarkdownProps {
   theme?: MarkdownTheme;
   controls?: StreamdownProps["controls"];
   lineNumbers?: StreamdownProps["lineNumbers"];
+  urlTransform?: StreamdownProps["urlTransform"];
 }
 
 const STREAMDOWN_PLUGINS = { code, math, mermaid };
@@ -368,6 +370,7 @@ function MarkdownImpl({
   theme,
   controls,
   lineNumbers,
+  urlTransform,
 }: MarkdownProps) {
   const { fontFamily, themeVariables } = useMarkdownMermaidTheme(theme);
   const mermaidOptions = useMemo<MermaidOptions>(() => {
@@ -415,6 +418,7 @@ function MarkdownImpl({
       lineNumbers={lineNumbers}
       mermaid={mermaidOptions}
       plugins={STREAMDOWN_PLUGINS}
+      urlTransform={urlTransform}
     >
       {children}
     </Streamdown>
