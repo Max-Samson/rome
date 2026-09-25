@@ -7,11 +7,13 @@ import {
   memo,
   useCallback,
   useMemo,
+  useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
 } from "react";
 import { Streamdown, type Components, type MermaidOptions, type StreamdownProps } from "streamdown";
 import { cn } from "./cn.js";
+import { MermaidDownloadMenuLayer } from "./mermaid-download-menu.js";
 
 export type { Components, MermaidConfig, MermaidOptions, StreamdownProps };
 export { defaultUrlTransform } from "streamdown";
@@ -372,6 +374,10 @@ function MarkdownImpl({
   lineNumbers,
   urlTransform,
 }: MarkdownProps) {
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const setRootFromMarker = useCallback((marker: HTMLSpanElement | null) => {
+    setRoot(marker?.previousElementSibling as HTMLDivElement | null);
+  }, []);
   const { fontFamily, themeVariables } = useMarkdownMermaidTheme(theme);
   const mermaidOptions = useMemo<MermaidOptions>(() => {
     const baseConfig: MermaidConfig = {
@@ -411,17 +417,21 @@ function MarkdownImpl({
   );
 
   return (
-    <Streamdown
-      className={wrapperClass}
-      components={components}
-      controls={controls}
-      lineNumbers={lineNumbers}
-      mermaid={mermaidOptions}
-      plugins={STREAMDOWN_PLUGINS}
-      urlTransform={urlTransform}
-    >
-      {children}
-    </Streamdown>
+    <>
+      <Streamdown
+        className={wrapperClass}
+        components={components}
+        controls={controls}
+        lineNumbers={lineNumbers}
+        mermaid={mermaidOptions}
+        plugins={STREAMDOWN_PLUGINS}
+        urlTransform={urlTransform}
+      >
+        {children}
+      </Streamdown>
+      <span hidden ref={setRootFromMarker} />
+      <MermaidDownloadMenuLayer root={root} />
+    </>
   );
 }
 
