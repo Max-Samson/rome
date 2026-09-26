@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.4.0](https://github.com/Max-Samson/rome/compare/app-web-sdk-v0.3.5...app-web-sdk-v0.4.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **app-web-sdk:** apps that import `@rome-os/app-web-sdk/styles` must declare `@rome-os/ui` themselves.
+
+### Features
+
+* **app-web-sdk:** take the component kit as a peer dependency ([#102](https://github.com/Max-Samson/rome/issues/102)) ([33d4cb3](https://github.com/Max-Samson/rome/commit/33d4cb360b3bd0927971d054d4361b5363414af4))
+* **deps:** upgrade Rslib to 1.0.0 ([#234](https://github.com/Max-Samson/rome/issues/234)) ([2f3736e](https://github.com/Max-Samson/rome/commit/2f3736e7912021a593f2733a8b2a66887d003847))
+* **node:** add remote computer CLI ([#459](https://github.com/Max-Samson/rome/issues/459)) ([79ae0c2](https://github.com/Max-Samson/rome/commit/79ae0c27a47da6d009ffcd91f14c996042cb234f))
+* **onboarding:** collapse cloud setup into the welcome conversation ([#222](https://github.com/Max-Samson/rome/issues/222)) ([00c96f7](https://github.com/Max-Samson/rome/commit/00c96f714d753ebe9cfb079d888d72daf04b8da5))
+* **ui:** split chat and app canvas tokens ([#447](https://github.com/Max-Samson/rome/issues/447)) ([d9a491f](https://github.com/Max-Samson/rome/commit/d9a491f4a2bf8be5dabfb50824d976f19d0fc7f6))
+
+
+### Bug Fixes
+
+* **app-web-sdk:** drop unused styling dependencies ([#307](https://github.com/Max-Samson/rome/issues/307)) ([51646ee](https://github.com/Max-Samson/rome/commit/51646eebda470d698e4db678af63db140a059948)), closes [#283](https://github.com/Max-Samson/rome/issues/283)
+* **app-web-sdk:** resolve app renderer from the SDK ([#301](https://github.com/Max-Samson/rome/issues/301)) ([ff0a3fe](https://github.com/Max-Samson/rome/commit/ff0a3fe024fc1ad80f5765df5df4465b8e7e672a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * peerDependencies
+    * @rome-os/ui bumped from ^0.3.0 to ^0.4.0
+
 ## [0.3.5](https://github.com/rome-os/rome/compare/app-web-sdk-v0.3.4...app-web-sdk-v0.3.5) (2026-09-25)
 
 

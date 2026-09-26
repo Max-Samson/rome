@@ -1,5 +1,20 @@
 # @rome-os/app-runtime
 
+## [0.6.8](https://github.com/Max-Samson/rome/compare/app-runtime-v0.6.7...app-runtime-v0.6.8) (2026-09-26)
+
+
+### Features
+
+* add app keys for guardian-entered app credentials ([#91](https://github.com/Max-Samson/rome/issues/91)) ([3576f96](https://github.com/Max-Samson/rome/commit/3576f9689b04279bb938647c07be1c093d7267be))
+* add Store Remix entry without installing source apps ([#90](https://github.com/Max-Samson/rome/issues/90)) ([bddf60f](https://github.com/Max-Samson/rome/commit/bddf60f9f5d523fea6c4e75cf144c0cc0071f365))
+* add streaming input to WebChat ([#121](https://github.com/Max-Samson/rome/issues/121)) ([f99eb96](https://github.com/Max-Samson/rome/commit/f99eb96cf28d1e6ba82be0c8b959f4947dd63ffb))
+* **app-runtime:** add explicit action visibility ([#451](https://github.com/Max-Samson/rome/issues/451)) ([768a205](https://github.com/Max-Samson/rome/commit/768a205e63ae3186d98cd51b7429ad7609a264b7))
+* **chat:** add a universal stop command ([#168](https://github.com/Max-Samson/rome/issues/168)) ([6c33dad](https://github.com/Max-Samson/rome/commit/6c33dad63f60e6f33ff2d9c5819f2390cf035eff))
+* **core:** use provider-native output schemas ([#164](https://github.com/Max-Samson/rome/issues/164)) ([9da1e18](https://github.com/Max-Samson/rome/commit/9da1e1840fcee42b95fa9e5cd439731b51f11c60))
+* **onboarding:** collapse cloud setup into the welcome conversation ([#222](https://github.com/Max-Samson/rome/issues/222)) ([00c96f7](https://github.com/Max-Samson/rome/commit/00c96f714d753ebe9cfb079d888d72daf04b8da5))
+* **people:** send a message to a person ([#208](https://github.com/Max-Samson/rome/issues/208)) ([2ecc85e](https://github.com/Max-Samson/rome/commit/2ecc85efb7bce8e7b23a8148c3241168511c139b))
+* unify channel pairing with Activity approvals ([#298](https://github.com/Max-Samson/rome/issues/298)) ([78b085a](https://github.com/Max-Samson/rome/commit/78b085a86145d791db425fcb26658de7f6c3198f))
+
 ## [0.6.7](https://github.com/rome-os/rome/compare/app-runtime-v0.6.6...app-runtime-v0.6.7) (2026-09-25)
 
 
