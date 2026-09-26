@@ -374,6 +374,8 @@ function MarkdownImpl({
   lineNumbers,
   urlTransform,
 }: MarkdownProps) {
+  // Keep the check conservative so nested and still-streaming fences are included.
+  const hasMermaidFence = /(?:```|~~~)[ \t]*mermaid\b/.test(children);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const setRootFromMarker = useCallback((marker: HTMLSpanElement | null) => {
     setRoot(marker?.previousElementSibling as HTMLDivElement | null);
@@ -429,8 +431,12 @@ function MarkdownImpl({
       >
         {children}
       </Streamdown>
-      <span hidden ref={setRootFromMarker} />
-      <MermaidDownloadMenuLayer root={root} />
+      {hasMermaidFence && (
+        <>
+          <span hidden ref={setRootFromMarker} />
+          <MermaidDownloadMenuLayer root={root} />
+        </>
+      )}
     </>
   );
 }
