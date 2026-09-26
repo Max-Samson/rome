@@ -1,11 +1,26 @@
-import { afterEach, describe, expect, it, rs } from "@rstest/core";
+import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { Suspense } from "react";
 import { Markdown, type MarkdownTheme, readMarkdownMermaidTheme } from "./markdown.js";
 
+beforeEach(() => {
+  rs.stubGlobal(
+    "IntersectionObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    },
+  );
+});
+
 afterEach(() => {
   cleanup();
   rs.restoreAllMocks();
+  rs.unstubAllGlobals();
   document.documentElement.className = "";
 });
 
@@ -14,6 +29,57 @@ function renderMd(md: string, props: { compact?: boolean; className?: string } =
 }
 
 describe("Markdown", () => {
+  it("does not observe ordinary Markdown while its content streams", () => {
+    const observe = rs.spyOn(MutationObserver.prototype, "observe");
+    const { container, rerender } = renderMd("Hello");
+    const root = container.firstElementChild;
+
+    for (const content of [
+      "Hello, world.",
+      "Hello, world.\n\nThe mermaid diagram comes later.",
+      "Hello, world.\n\n```typescript\nconst diagram = 'mermaid';\n```",
+    ]) {
+      rerender(<Markdown>{content}</Markdown>);
+      expect(observe.mock.calls.filter(([target]) => target === root)).toHaveLength(0);
+      expect(container.children).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    "```mermaid",
+    "~~~mermaid",
+    "````mermaid",
+    "  ``` mermaid",
+    "> ```mermaid",
+    "- ```mermaid",
+  ])("observes a Mermaid opening fence without waiting for its closing fence: %s", (fence) => {
+    const observe = rs.spyOn(MutationObserver.prototype, "observe");
+    const { container } = renderMd(`${fence}\ngraph TD; A-->B;`);
+
+    expect(observe.mock.calls).toContainEqual([
+      container.firstElementChild,
+      { childList: true, subtree: true },
+    ]);
+  });
+
+  it("starts observing when a streamed fence arrives and stops when Mermaid content is removed", async () => {
+    const { container, rerender } = renderMd("A reply\n\n```mer");
+    const root = container.querySelector(".rome-markdown")!;
+    const scan = rs.spyOn(root, "querySelectorAll");
+
+    rerender(<Markdown>{"A reply\n\n```mermaid\ngraph TD; A-->B;"}</Markdown>);
+    expect(scan).toHaveBeenCalledWith('[data-streamdown="mermaid-block-actions"]');
+
+    rerender(<Markdown>A plain reply</Markdown>);
+    scan.mockClear();
+    await act(async () => {
+      root.append(document.createElement("p"));
+    });
+
+    expect(scan).not.toHaveBeenCalledWith('[data-streamdown="mermaid-block-actions"]');
+    expect(container.children).toHaveLength(1);
+  });
+
   it("passes a host URL transform through without changing the image renderer", () => {
     render(
       <Markdown urlTransform={(url, key) => (key === "src" ? `/assets${url}` : url)}>
