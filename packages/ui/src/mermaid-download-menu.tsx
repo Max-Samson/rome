@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "./popover.js";
 
 const ACTIONS_SELECTOR = '[data-streamdown="mermaid-block-actions"]';
@@ -55,6 +55,7 @@ function sameMenus(left: DownloadMenu[], right: DownloadMenu[]): boolean {
 
 function PortaledDownloadMenu({ menu }: { menu: DownloadMenu }) {
   const virtualRef = useMemo(() => ({ current: menu.trigger }), [menu.trigger]);
+  const interactedOutside = useRef(false);
 
   return (
     <Popover open>
@@ -62,23 +63,59 @@ function PortaledDownloadMenu({ menu }: { menu: DownloadMenu }) {
       <PopoverContent
         align="end"
         aria-label={menu.trigger.getAttribute("aria-label") ?? undefined}
-        className="max-h-[var(--radix-popover-content-available-height)] w-auto min-w-[120px] gap-0 overflow-y-auto rounded-md border border-border bg-background p-0 shadow-lg ring-0"
+        className="max-h-[var(--radix-popover-content-available-height)] w-auto min-w-[120px] gap-0 overflow-y-auto border border-border bg-background p-0 shadow-lg ring-0"
         collisionPadding={8}
         data-rome-mermaid-download-menu=""
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          // A portal can remount into a Shadow DOM while the source menu stays open.
+          if (!menu.menu.isConnected && !interactedOutside.current) menu.trigger.focus();
+        }}
         onEscapeKeyDown={(event) => {
           event.preventDefault();
           menu.trigger.click();
           menu.trigger.focus();
         }}
+        onInteractOutside={() => {
+          interactedOutside.current = true;
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Tab") {
+            event.preventDefault();
+            menu.trigger.click();
+            return;
+          }
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const items = Array.from(
+            event.currentTarget.querySelectorAll<HTMLButtonElement>(
+              '[role="menuitem"]:not(:disabled)',
+            ),
+          );
+          const current = items.indexOf(event.target as HTMLButtonElement);
+          let next = 0;
+          switch (event.key) {
+            case "ArrowDown":
+              next = (current + 1) % items.length;
+              break;
+            case "ArrowUp":
+              next = current <= 0 ? items.length - 1 : current - 1;
+              break;
+            case "End":
+              next = items.length - 1;
+              break;
+          }
+          items[next]?.focus();
+        }}
         onMouseDown={(event) => event.stopPropagation()}
-        onOpenAutoFocus={(event) => event.preventDefault()}
         role="menu"
         side="bottom"
       >
         {menu.items.map((item, index) => (
           <button
             aria-label={item.label}
-            className="w-full px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
+            className="w-full px-3 py-2 text-left text-ui transition-colors hover:bg-muted/40 focus-visible:bg-muted/40"
             disabled={item.button.disabled}
             key={`${item.label}-${index}`}
             onClick={() => item.button.click()}

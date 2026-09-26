@@ -2,16 +2,31 @@
 
 import { afterEach, describe, expect, it } from "@rstest/core";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import userEvent from "@testing-library/user-event";
+import { useEffect, useRef, useState } from "react";
 import { MermaidDownloadMenuLayer } from "./mermaid-download-menu.js";
 
-function Fixture({ onDownload }: { onDownload: (format: string) => void }) {
+function Fixture({
+  onDownload,
+  disabledFormats = [],
+}: {
+  onDownload: (format: string) => void;
+  disabledFormats?: string[];
+}) {
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const sourceRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: MouseEvent) => {
+      if (sourceRef.current && !event.composedPath().includes(sourceRef.current)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOutside);
+    return () => document.removeEventListener("mousedown", closeOutside);
+  }, []);
   return (
     <div ref={setRoot} data-testid="root">
       <div data-streamdown="mermaid-block-actions">
-        <div>
+        <div ref={sourceRef}>
           <button type="button" onClick={() => setOpen((value) => !value)}>
             Download diagram
           </button>
@@ -24,6 +39,7 @@ function Fixture({ onDownload }: { onDownload: (format: string) => void }) {
               ].map(([format, label]) => (
                 <button
                   aria-label={`Download diagram as ${label}`}
+                  disabled={disabledFormats.includes(format)}
                   key={format}
                   onClick={() => {
                     onDownload(format);
@@ -47,6 +63,67 @@ function Fixture({ onDownload }: { onDownload: (format: string) => void }) {
 afterEach(cleanup);
 
 describe("Mermaid download menu layer", () => {
+  it.each(["{Enter}", " "])("supports a keyboard-only download opened with %s", async (key) => {
+    const user = userEvent.setup();
+    const downloads: string[] = [];
+    render(<Fixture onDownload={(format) => downloads.push(format)} />);
+    const trigger = screen.getByRole("button", { name: "Download diagram" });
+
+    await user.tab();
+    expect(document.activeElement).toBe(trigger);
+    await user.keyboard(key);
+    const svg = await screen.findByRole("menuitem", { name: "Download diagram as SVG" });
+    await waitFor(() => expect(document.activeElement).toBe(svg));
+
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(
+      screen.getByRole("menuitem", { name: "Download diagram as PNG" }),
+    );
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(
+      screen.getByRole("menuitem", { name: "Download diagram as MMD" }),
+    );
+    await user.keyboard(key);
+
+    expect(downloads).toEqual(["mmd"]);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("skips disabled formats and supports arrow, Home, and End navigation", async () => {
+    const user = userEvent.setup();
+    render(<Fixture disabledFormats={["svg"]} onDownload={() => {}} />);
+    await user.tab();
+    await user.keyboard("{Enter}");
+    const png = await screen.findByRole("menuitem", { name: "Download diagram as PNG" });
+    const mmd = screen.getByRole("menuitem", { name: "Download diagram as MMD" });
+    await waitFor(() => expect(document.activeElement).toBe(png));
+
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(mmd);
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(png);
+    await user.keyboard("{End}");
+    expect(document.activeElement).toBe(mmd);
+    await user.keyboard("{Home}");
+    expect(document.activeElement).toBe(png);
+  });
+
+  it.each(["{Escape}", "{Tab}"])("closes with %s and restores trigger focus", async (key) => {
+    const user = userEvent.setup();
+    render(<Fixture onDownload={() => {}} />);
+    const trigger = screen.getByRole("button", { name: "Download diagram" });
+    await user.tab();
+    await user.keyboard("{Enter}");
+    const svg = await screen.findByRole("menuitem", { name: "Download diagram as SVG" });
+    await waitFor(() => expect(document.activeElement).toBe(svg));
+
+    await user.keyboard(key);
+
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
   it("moves every format into a portal and delegates the selected download", async () => {
     const downloads: string[] = [];
     render(<Fixture onDownload={(format) => downloads.push(format)} />);
@@ -62,6 +139,19 @@ describe("Mermaid download menu layer", () => {
 
     expect(downloads).toEqual(["mmd"]);
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  it("preserves focus on an outside control when a pointer click dismisses the menu", async () => {
+    const user = userEvent.setup();
+    render(<Fixture onDownload={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "Download diagram" }));
+    await screen.findByRole("menu");
+    const copy = screen.getByRole("button", { name: "Copy" });
+
+    await user.click(copy);
+
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(document.activeElement).toBe(copy);
   });
 
   it("restores focus to the download trigger when Escape closes the menu", async () => {
