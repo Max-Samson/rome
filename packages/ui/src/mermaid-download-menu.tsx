@@ -55,6 +55,7 @@ function sameMenus(left: DownloadMenu[], right: DownloadMenu[]): boolean {
 
 function PortaledDownloadMenu({ menu }: { menu: DownloadMenu }) {
   const virtualRef = useMemo(() => ({ current: menu.trigger }), [menu.trigger]);
+  const contentRef = useRef<HTMLDivElement>(null);
   const interactedOutside = useRef(false);
 
   return (
@@ -109,6 +110,16 @@ function PortaledDownloadMenu({ menu }: { menu: DownloadMenu }) {
           items[next]?.focus();
         }}
         onMouseDown={(event) => event.stopPropagation()}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          // Radix's default focus lookup stops at the shadow host in app portals.
+          const content = contentRef.current;
+          const first = content?.querySelector<HTMLButtonElement>(
+            '[role="menuitem"]:not(:disabled)',
+          );
+          (first ?? content)?.focus();
+        }}
+        ref={contentRef}
         role="menu"
         side="bottom"
       >

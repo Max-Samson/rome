@@ -1,7 +1,7 @@
 // @rstest-environment jsdom
 
 import { afterEach, describe, expect, it } from "@rstest/core";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, useState } from "react";
 import { MermaidDownloadMenuLayer } from "./mermaid-download-menu.js";
@@ -63,6 +63,31 @@ function Fixture({
 afterEach(cleanup);
 
 describe("Mermaid download menu layer", () => {
+  it("focuses the first enabled format inside an app Shadow DOM", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const shadow = host.attachShadow({ mode: "open" });
+    const container = document.createElement("div");
+    shadow.append(container);
+    try {
+      render(<Fixture disabledFormats={["svg"]} onDownload={() => {}} />, { container });
+      const trigger = within(container).getByRole("button", { name: "Download diagram" });
+      trigger.focus();
+      fireEvent.click(trigger);
+
+      await waitFor(() => {
+        expect(shadow.activeElement?.getAttribute("aria-label")).toBe("Download diagram as PNG");
+      });
+      fireEvent.keyDown(shadow.activeElement!, { key: "ArrowDown" });
+      expect(shadow.activeElement?.getAttribute("aria-label")).toBe("Download diagram as MMD");
+      fireEvent.keyDown(shadow.activeElement!, { key: "Escape" });
+      await waitFor(() => expect(shadow.querySelector('[role="menu"]')).toBeNull());
+      expect(shadow.activeElement).toBe(trigger);
+    } finally {
+      host.remove();
+    }
+  });
+
   it.each(["{Enter}", " "])("supports a keyboard-only download opened with %s", async (key) => {
     const user = userEvent.setup();
     const downloads: string[] = [];
