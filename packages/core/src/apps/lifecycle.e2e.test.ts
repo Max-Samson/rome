@@ -26,6 +26,7 @@ import type { ModelSessionParams } from "../core/agent-runner.js";
 import type { AppstoreSource } from "./lockfile.js";
 import { AppLifecycleService } from "./lifecycle-service.js";
 import { appIdToPathSegment, packArtifact } from "./packaging/index.js";
+import { createEmptyLegacyArtifactBindings } from "./artifact-id.js";
 
 const FIXTURES_AGENTS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -479,12 +480,13 @@ async function buildSessionManagerForHarness(harness: AppLifecycleHarness): Prom
   provider: McpSessionModelProvider;
   agentName: string;
 }> {
-  const agentLoader = new AgentLoader();
+  const artifactIdentity = { legacyBindings: createEmptyLegacyArtifactBindings() };
+  const agentLoader = new AgentLoader(artifactIdentity);
   await agentLoader.loadAll(FIXTURES_AGENTS_DIR);
   const agentName = "test-all-actions";
 
   const sessionsRepo = new SessionsRepository(harness.db);
-  const sessionManager = new SessionManager(sessionsRepo);
+  const sessionManager = new SessionManager(sessionsRepo, artifactIdentity);
   const promptBuilder = new PromptBuilder();
   const provider = new McpSessionModelProvider();
   const modelResolver = createModelResolver({

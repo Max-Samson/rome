@@ -22,6 +22,10 @@ import { createModelResolver } from "./model-resolver.js";
 import { PromptBuilder } from "./prompt-builder.js";
 import { SessionManager } from "./session-manager.js";
 import { SkillCatalog } from "./skill-catalog.js";
+import {
+  createEmptyLegacyArtifactBindings,
+  type ArtifactIdentityContext,
+} from "../apps/artifact-id.js";
 
 const AGENT = "pinned_agent";
 const MODEL = "gpt-5.3-codex-spark";
@@ -82,6 +86,7 @@ describe("agent model pins through AgentSessionManager", () => {
   let anthropic: ReturnType<typeof createProvider>;
   let state: ReturnType<typeof healthyState>;
   const managers: AgentSessionManager[] = [];
+  let artifactIdentity: ArtifactIdentityContext;
 
   async function writeConfig(overrides: Record<string, unknown> = {}): Promise<void> {
     const config = { ...baseConfig, ...overrides };
@@ -114,7 +119,7 @@ describe("agent model pins through AgentSessionManager", () => {
           },
         }),
         capabilityDiscovery: new CapabilityDiscovery(),
-        skillCatalog: new SkillCatalog(),
+        skillCatalog: new SkillCatalog(artifactIdentity),
         lifecycleDispatcher: createAgentLifecycleDispatcher(),
       },
       { keepAliveAcrossTurns: true, isSubagent },
@@ -126,9 +131,10 @@ describe("agent model pins through AgentSessionManager", () => {
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "rome-agent-model-pin-"));
     testDb = createTestDb();
-    loader = new AgentLoader();
+    artifactIdentity = { legacyBindings: createEmptyLegacyArtifactBindings() };
+    loader = new AgentLoader(artifactIdentity);
     sessionsRepo = new SessionsRepository(testDb.db);
-    sessionManager = new SessionManager(sessionsRepo);
+    sessionManager = new SessionManager(sessionsRepo, artifactIdentity);
     openai = createProvider("openai");
     anthropic = createProvider("anthropic");
     state = healthyState();

@@ -3634,6 +3634,14 @@ class AgentSessionImpl implements AgentSession {
 
 // Helpers
 
+/**
+ * The model-facing tool name for delegating to a subagent. Provider tool names
+ * reject the ":" in an artifact id, so the id maps to a stable hash.
+ */
+export function subagentToolName(subagentId: string): string {
+  return `sa_${createHash("sha256").update(subagentId).digest("hex").slice(0, 16)}`;
+}
+
 function buildSubagentTools(
   agentLoader: AgentLoader,
   config: ReturnType<AgentLoader["get"]>,
@@ -3644,9 +3652,7 @@ function buildSubagentTools(
   const targets = new Map<string, string>();
   const tools = config.allowedSubagents.map((subagentName) => {
     const subConfig = agentLoader.get(subagentName);
-    const toolName = subagentName.includes(":")
-      ? `sa_${createHash("sha256").update(subagentName).digest("hex").slice(0, 16)}`
-      : subagentName;
+    const toolName = subagentToolName(subagentName);
     targets.set(toolName, subagentName);
     return {
       name: toolName,

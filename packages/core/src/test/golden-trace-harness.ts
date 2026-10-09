@@ -31,6 +31,7 @@ import {
   type TestDb,
   createActionEngineRepos,
 } from "./helpers.js";
+import { createEmptyLegacyArtifactBindings } from "../apps/artifact-id.js";
 
 export const FIXTURES_DIR = join(import.meta.dirname, "fixtures", "agents");
 
@@ -77,14 +78,15 @@ export interface GoldenTraceOptions {
 export async function buildGoldenTraceRig(options: GoldenTraceOptions): Promise<GoldenTraceRig> {
   const testDb = createTestDb();
   const sessionsRepo = new SessionsRepository(testDb.db);
-  const sessionManager = new SessionManager(sessionsRepo);
+  const artifactIdentity = { legacyBindings: createEmptyLegacyArtifactBindings() };
+  const sessionManager = new SessionManager(sessionsRepo, artifactIdentity);
   const promptBuilder = new PromptBuilder();
   const actionRegistry = new ActionRegistryImpl();
   const actionEngine = new ActionEngine(actionRegistry, createActionEngineRepos(testDb.db), {
     tracer: options.tracer,
   });
 
-  const agentLoader = new AgentLoader();
+  const agentLoader = new AgentLoader(artifactIdentity);
   await agentLoader.loadAll(options.fixturesDir ?? FIXTURES_DIR);
 
   for (const action of options.extraActions ?? []) {
@@ -113,7 +115,7 @@ export async function buildGoldenTraceRig(options: GoldenTraceOptions): Promise<
     modelResolver,
     actionEngine,
     capabilityDiscovery: new CapabilityDiscovery(),
-    skillCatalog: new SkillCatalog(),
+    skillCatalog: new SkillCatalog(artifactIdentity),
     lifecycleDispatcher: createAgentLifecycleDispatcher(),
   });
   const runner = new AgentRunner(manager, agentLoader);
