@@ -390,6 +390,24 @@ describe("send_message preview", () => {
 
     expect(payload).toMatchObject({ fields: [{ label: "Channel", value: "matrix" }] });
   });
+
+  it("names the agent a message goes to by name, but never shows an agent id", () => {
+    const action = createSendMessageAction(config, makeAdapter("agents"));
+    const id = "0b6f6f8e-8a4c-4f3e-9c9d-2f1a3b4c5d6e";
+
+    expect(action.preview!({ channel: "agents", to: "Atlas", text: "hi" })).toMatchObject({
+      fields: [
+        { label: "Channel", value: "Agents" },
+        { label: "To", value: "Atlas" },
+      ],
+    });
+    expect(action.preview!({ channel: "agents", to: id, text: "hi" })).toMatchObject({
+      fields: [{ label: "Channel", value: "Agents" }],
+    });
+    expect(
+      JSON.stringify(action.preview!({ channel: "agents", to: id, text: "hi" })),
+    ).not.toContain(id);
+  });
 });
 
 describe("send_message to an agent by name", () => {
@@ -490,6 +508,33 @@ describe("send_message to an agent by name", () => {
 
     expect(agentNames.resolve).not.toHaveBeenCalled();
     expect(adapter.send).toHaveBeenCalledWith("agents", ATLAS, expect.anything());
+  });
+
+  it("reads a padded guardian alias as the alias, as the approval card does", async () => {
+    const adapter = makeAdapter("agents");
+    const agentNames = names({ status: "found", agentId: ATLAS });
+    const personMappingRepo = {
+      findByBondLevel: rs.fn(async () => [
+        { channelMappings: [{ channel: "agents", channelUserId: ATLAS }] },
+      ]),
+    };
+
+    await executeSendMessage(
+      adapter,
+      { channel: "agents", to: " guardian", text: "hi" },
+      { agentNames, personMappingRepo },
+    );
+
+    expect(agentNames.resolve).not.toHaveBeenCalled();
+    expect(adapter.send).toHaveBeenCalledWith("agents", ATLAS, expect.anything());
+  });
+
+  it("says what `to` takes on agents when it is empty", async () => {
+    const adapter = makeAdapter("agents");
+
+    await expect(
+      executeSendMessage(adapter, { channel: "agents", to: " ", text: "hi" }),
+    ).rejects.toThrow('Channel "agents" takes an agent\'s name or "guardian" as `to`');
   });
 
   it("refuses a name from any agent but main, without looking", async () => {

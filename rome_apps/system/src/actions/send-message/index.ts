@@ -278,24 +278,38 @@ async function resolveAgentThreadId(name: string, deps: SendMessageRuntimeDeps):
         labels.size === found.matches.length
           ? "Send again with the full name as `to` or the id as `threadId`."
           : "Send again with the id as `threadId`.";
-      throw new Error(`More than one agent is named "${wanted}": ${options}. ${retry}`);
+      throw new Error(`"${wanted}" does not name one of your agents: ${options}. ${retry}`);
     }
   }
+}
+
+/** The agent a send on "agents" names in `to`, read the same way for the
+ *  send and for its approval card, so the card never shows less than the
+ *  send acts on. "guardian" keeps its alias meaning. The card shows the name
+ *  as given: a bare name reaches only the guardian's own agent, and another
+ *  account's agent is named by its whole label, such as `Atlas (@ouou's dot)`. */
+function agentRecipient(channel: unknown, to: unknown): string | undefined {
+  if (channel !== "agents" || typeof to !== "string") return undefined;
+  const name = to.trim();
+  return name && name !== "guardian" ? name : undefined;
 }
 
 async function resolveChatThreadId(
   chat: SendMessageChatInput,
   deps: SendMessageRuntimeDeps,
 ): Promise<string> {
-  if (chat.channel === "agents" && typeof chat.to === "string" && chat.to !== "guardian") {
-    return resolveAgentThreadId(chat.to, deps);
-  }
-  if (chat.to !== undefined && chat.to !== "guardian") {
+  const agent = agentRecipient(chat.channel, chat.to);
+  if (agent) return resolveAgentThreadId(agent, deps);
+  // Trimmed as `agentRecipient` trims, so the alias reads the same here.
+  const to = typeof chat.to === "string" ? chat.to.trim() : chat.to;
+  if (to !== undefined && to !== "guardian") {
     throw new Error(
-      `Channel "${chat.channel}" only supports to: "guardian"; use threadId for explicit recipients`,
+      chat.channel === "agents"
+        ? 'Channel "agents" takes an agent\'s name or "guardian" as `to`, or an agent\'s id as `threadId`'
+        : `Channel "${chat.channel}" only supports to: "guardian"; use threadId for explicit recipients`,
     );
   }
-  if (chat.to === "guardian") return resolveGuardianThreadId(chat.channel, deps);
+  if (to === "guardian") return resolveGuardianThreadId(chat.channel, deps);
   if (chat.threadId) return chat.threadId;
   throw new Error(`Channel "${chat.channel}" requires a threadId or to: "guardian"`);
 }
@@ -501,13 +515,19 @@ export function createSendMessageAction(
     preview(args: Record<string, unknown>): PreviewPayload {
       const input = args as Partial<SendMessageInput>;
       const channel = typeof input.channel === "string" ? input.channel : undefined;
+      // An agent's name given as `to` is already readable, so the card names
+      // the agent. An id stays off the card, as every recipient id does.
+      const recipient = agentRecipient(channel, input.to);
+      const agentName = recipient && !AGENT_ID.test(recipient) ? recipient : undefined;
+      const fields = [
+        ...(channel ? [{ label: "Channel", value: CHANNEL_LABELS[channel] ?? channel }] : []),
+        ...(agentName ? [{ label: "To", value: agentName }] : []),
+      ];
       return {
         kind: "generic",
         title: "Send a message",
         summary: typeof input.text === "string" && input.text ? input.text : "(no message text)",
-        ...(channel
-          ? { fields: [{ label: "Channel", value: CHANNEL_LABELS[channel] ?? channel }] }
-          : {}),
+        ...(fields.length > 0 ? { fields } : {}),
       };
     },
   };
