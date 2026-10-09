@@ -547,6 +547,19 @@
     "refresh": "刷新",
     "refreshing": "正在刷新…",
     "refreshFailed": "无法刷新 AI 工具，请重试。",
+    "romeCredits": {
+      "name": "Rome 额度",
+      "status": {
+        "inUse": "使用中",
+        "ready": "就绪",
+        "standby": "待用",
+        "usedUp": "已用完",
+        "usedUpWithClaude": "已用完",
+        "paused": "已暂停"
+      },
+      "ofGranted": "共 {{amount}}",
+      "meterLabel": "Rome 剩余额度"
+    },
     "providers": {
       "claudeCode": {
         "name": "Claude"

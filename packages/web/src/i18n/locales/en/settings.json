@@ -547,6 +547,19 @@
     "refresh": "Refresh",
     "refreshing": "Refreshing…",
     "refreshFailed": "Could not refresh AI tools. Please try again.",
+    "romeCredits": {
+      "name": "Rome credits",
+      "status": {
+        "inUse": "In use",
+        "ready": "Ready",
+        "standby": "Standby",
+        "usedUp": "Used up",
+        "usedUpWithClaude": "Used up",
+        "paused": "Paused"
+      },
+      "ofGranted": "of {{amount}}",
+      "meterLabel": "Rome credits left"
+    },
     "providers": {
       "claudeCode": {
         "name": "Claude"
