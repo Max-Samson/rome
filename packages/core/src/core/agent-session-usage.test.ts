@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ActionEngine } from "../actions/engine.js";
 import { ActionRegistryImpl } from "../actions/registry.js";
 import { SessionsRepository } from "../db/repositories/sessions.js";
-import { createTestDb, type TestDb } from "../test/helpers.js";
+import { createTestDb, type TestDb, createActionEngineRepos } from "../test/helpers.js";
 import type { AgentEvent } from "../types.js";
 import type { UsageFunding } from "../usage/events.js";
 import type { TurnUsageFacts } from "../usage/recorder.js";
@@ -103,7 +103,7 @@ describe("AgentSession turn usage", () => {
       codex: { loggedIn: true, quotaExhausted: false, solAccess: true, lunaAccess: true },
       claude: { loggedIn: false, quotaExhausted: false },
     };
-    const actionRegistry = new ActionRegistryImpl([]);
+    const actionRegistry = new ActionRegistryImpl();
     const promptBuilder = new PromptBuilder();
     const sessionsRepo = new SessionsRepository(testDb.db);
     rs.spyOn(promptBuilder, "build").mockReturnValue("Usage test prompt");
@@ -122,7 +122,7 @@ describe("AgentSession turn usage", () => {
         sessionsRepo,
         promptBuilder,
         actionRegistry,
-        actionEngine: new ActionEngine(actionRegistry),
+        actionEngine: new ActionEngine(actionRegistry, createActionEngineRepos(testDb.db)),
         modelResolver: createModelResolver({
           providers: [provider],
           aiToolState: { get: () => state, refresh: async () => state },

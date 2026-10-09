@@ -16,6 +16,7 @@ import {
   runWithHookInvocationContext,
 } from "../core/hook-recursion.js";
 import type { ActionResult } from "./types.js";
+import { createActionEngineRepos } from "../test/helpers.js";
 
 interface SubprocessEngine {
   executeInSubprocess(...args: unknown[]): Promise<ActionResult>;
@@ -648,9 +649,9 @@ describe("WorkerRpcServer events.publish", () => {
       }
     }
     const worker = new PooledWorker();
-    const registry = new ActionRegistryImpl([]);
+    const registry = new ActionRegistryImpl();
     registry.register(buildAction("routine_action"));
-    const actionEngine = new ActionEngine(registry, undefined, undefined, undefined, undefined, {
+    const actionEngine = new ActionEngine(registry, createActionEngineRepos(), {
       processRole: "main",
       workerWarmPoolSize: 1,
       actionWorkerFork: () => worker as unknown as ChildProcess,
@@ -674,7 +675,6 @@ describe("WorkerRpcServer events.publish", () => {
       nextSequence: 0,
       replayIndex: 0,
       mode: "record",
-      divergenceMode: "fallthrough",
     };
     actionEngine.startWorkerWarmPool();
     // ChildProcess IPC callbacks run under the async resource created by
@@ -874,9 +874,9 @@ describe("notify.send dispatch", () => {
     const exited = rs.fn();
     worker.on("disconnect", disconnected);
     worker.on("exit", exited);
-    const registry = new ActionRegistryImpl([]);
+    const registry = new ActionRegistryImpl();
     registry.register(buildAction("send_notification"));
-    const engine = new ActionEngine(registry, undefined, undefined, undefined, undefined, {
+    const engine = new ActionEngine(registry, createActionEngineRepos(), {
       processRole: "main",
       workerWarmPoolSize: 0,
       actionWorkerFork: () => worker as unknown as ChildProcess,
