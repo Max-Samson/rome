@@ -292,7 +292,7 @@ describe("AgentRunner", () => {
       peek: rs.fn(() => source),
       shutdown: rs.fn(async () => undefined),
     } as unknown as AgentSessionManager;
-    const runner = new AgentRunner(manager);
+    const runner = new AgentRunner(manager, agentLoader);
 
     const messages = await collectMessages(
       runner.runForked({
@@ -347,7 +347,7 @@ describe("AgentRunner", () => {
         peek: rs.fn(() => source),
         shutdown: rs.fn(async () => undefined),
       } as unknown as AgentSessionManager;
-      const runner = new AgentRunner(manager, undefined, repo);
+      const runner = new AgentRunner(manager, agentLoader, repo);
 
       const messages = await collectMessages(
         runner.runForked({
@@ -429,7 +429,7 @@ describe("AgentRunner", () => {
       shutdown: rs.fn(async () => undefined),
     } as unknown as AgentSessionManager;
     const turnStreams = createAgentTurnStreamRegistry();
-    const runner = new AgentRunner(manager, undefined, undefined, turnStreams);
+    const runner = new AgentRunner(manager, agentLoader, undefined, turnStreams);
     const iterator = runner
       .runForked({
         agentName: "main",
@@ -659,7 +659,7 @@ describe("AgentRunner", () => {
         managerDeps(createTestModelResolver({ providers: [provider] })),
         { keepAliveAcrossTurns: true, idleTtlMs: 100 },
       );
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
       const key = { agentName: "test-main", channelThreadKey: "webchat:fork-idle-lease" };
       let firstFork: AsyncIterator<AgentEvent> | undefined;
       let secondFork: AsyncIterator<AgentEvent> | undefined;
@@ -1435,7 +1435,7 @@ describe("AgentRunner", () => {
       const manager = createAgentSessionManager(managerDeps(modelResolver), {
         keepAliveAcrossTurns: true,
       });
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
       // A conversational-handback source (interactive-summon child session):
       // No config outputSchema; the session-scoped contract wires handback tools.
       const source = await manager.acquire(
@@ -1514,7 +1514,7 @@ describe("AgentRunner", () => {
       const manager = createAgentSessionManager(managerDeps(modelResolver), {
         keepAliveAcrossTurns: true,
       });
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
       const first = await collectMessages(
         runner.run({ agentName: "test-main", prompt: "Hi", channelThreadKey: "webchat:fork-iso" }),
       );
@@ -1620,7 +1620,7 @@ describe("AgentRunner", () => {
       },
       { keepAliveAcrossTurns: options.keepAliveAcrossTurns },
     );
-    return new AgentRunner(manager);
+    return new AgentRunner(manager, agentLoader);
   }
 
   function createClosableModelSession(params: ModelSessionParams): ModelSession {
@@ -1910,7 +1910,7 @@ describe("AgentRunner", () => {
         managerDeps(createTestModelResolver({ providers: [provider] })),
         { keepAliveAcrossTurns: true },
       );
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
       const session = await manager.acquire({
         agentName: "test-main",
         channelThreadKey: "webchat:abort-fork",
@@ -1969,6 +1969,8 @@ describe("AgentRunner", () => {
         sessionId: "sess-1",
         status: "idle",
         sendTurn,
+        submitInput: rs.fn(),
+        runForkedTurn: rs.fn(),
         subscribe: rs.fn(() => () => undefined),
         onStatusChange: rs.fn(() => () => undefined),
         interrupt: rs.fn(async () => undefined),
@@ -1980,9 +1982,10 @@ describe("AgentRunner", () => {
         }),
         acquireBySessionId: rs.fn(async () => session),
         peek: rs.fn(() => undefined),
+        findWorkingDirBySessionId: rs.fn(),
         shutdown: rs.fn(async () => undefined),
       };
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
 
       await collectMessages(
         runner.run({
@@ -3865,7 +3868,7 @@ describe("AgentRunner", () => {
       await firstManager.shutdown();
 
       const resumedManager = createAgentSessionManager(managerDeps(modelResolver));
-      const resumedRunner = new AgentRunner(resumedManager);
+      const resumedRunner = new AgentRunner(resumedManager, agentLoader);
       const resumedMessages = await collectMessages(
         resumedRunner.run({
           agentName: "test-main",
@@ -4357,7 +4360,7 @@ describe("AgentRunner", () => {
       await repo.setProviderInfo(legacyId, "openai", "codex-thread");
 
       const manager = createAgentSessionManager(managerDeps(modelResolver));
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
       await collectMessages(
         runner.run({ agentName: "test-main", sessionId: legacyId, prompt: "Continue" }),
       );
@@ -4436,7 +4439,7 @@ describe("AgentRunner", () => {
       // would now pick Sol; the pin keeps the resume on Terra.
       state.codex.solAccess = true;
       const resumedManager = createAgentSessionManager(managerDeps(modelResolver));
-      const runner = new AgentRunner(resumedManager);
+      const runner = new AgentRunner(resumedManager, agentLoader);
       await collectMessages(
         runner.run({ agentName: "test-main", sessionId: first.sessionId, prompt: "Continue" }),
       );
@@ -4575,7 +4578,7 @@ describe("AgentRunner", () => {
       await repo.setProviderInfo(legacyId, "openai", "codex-thread");
 
       const manager = createAgentSessionManager(managerDeps(modelResolver));
-      const runner = new AgentRunner(manager);
+      const runner = new AgentRunner(manager, agentLoader);
       const messages = await collectMessages(
         runner.run({ agentName: "test-main", sessionId: legacyId, prompt: "Continue" }),
       );

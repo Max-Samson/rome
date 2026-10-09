@@ -11,13 +11,19 @@ import {
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import { createWebchatRuntime } from "./webchat.js";
-import { AgentInputQueue } from "../../core/agent-input-queue.js";
+import {
+  AgentInputQueue,
+  type AgentInputReceipt,
+  type SubmitInputOptions,
+} from "../../core/agent-input-queue.js";
 import { runWithSessionActor } from "../../lib/session-actor.js";
 import { createTestDb, buildTestDeps, type TestDb, type TestDeps } from "../../test/helpers.js";
 import { seedBaseline, type BaselineIds } from "../../test/seeds.js";
 import type {
   AgentSession,
   AgentSessionInit,
+  AgentSessionKey,
+  AgentSessionManager,
   AgentTurnHandle,
   AgentTurnInput,
   SendTurnOptions,
@@ -84,6 +90,9 @@ describe("Webchat API", () => {
       currentTurnId: "input-turn",
       sendTurn: start,
       submitInput: (input, options) => queue.submit(input, options),
+      runForkedTurn: () => {
+        throw new Error("not forked");
+      },
       subscribe: () => () => {},
       onStatusChange: () => () => {},
       interrupt: async () => {},
@@ -91,7 +100,9 @@ describe("Webchat API", () => {
     };
     deps.agentSessionManager = {
       acquire: rs.fn(async () => agent),
+      acquireBySessionId: rs.fn(async () => agent),
       peek: () => agent,
+      findWorkingDirBySessionId: () => undefined,
       shutdown: async () => {},
     };
     const app = createWebchatRuntime(deps).routes;
@@ -142,7 +153,7 @@ describe("Webchat API", () => {
     const finishers: (() => void)[] = [];
     let sequence = 0;
     const interrupt = rs.fn(async () => {});
-    const agent: AgentSession = {
+    const agent = withSubmitInput({
       key: { agentName: "main", channelThreadKey: "webchat:test" },
       sessionId: "agent-session",
       status: "running",
@@ -165,10 +176,12 @@ describe("Webchat API", () => {
       onStatusChange: () => () => {},
       interrupt,
       close: async () => {},
-    };
+    });
     deps.agentSessionManager = {
       acquire: rs.fn(async () => agent),
+      acquireBySessionId: rs.fn(async () => agent),
       peek: () => agent,
+      findWorkingDirBySessionId: () => undefined,
       shutdown: async () => {},
     };
     const app = createWebchatRuntime(deps).routes;
@@ -1130,31 +1143,27 @@ describe("Webchat API", () => {
     const stdoutSpy = rs.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      deps.agentSessionManager = {
-        acquire: rs.fn(
-          async () =>
-            ({
-              key: { agentName: "main", channelThreadKey: "webchat:test" },
-              sessionId: "agent-session",
-              status: "idle",
-              sendTurn() {
-                return {
-                  turnId: "turn-inbound-log",
-                  events: (async function* () {
-                    yield { type: "result", content: "" };
-                  })(),
-                  turnContext: otelContext.active(),
-                };
-              },
-              subscribe: () => () => undefined,
-              onStatusChange: () => () => undefined,
-              interrupt: async () => undefined,
-              close: async () => undefined,
-            }) satisfies AgentSession,
-        ),
-        peek: () => undefined,
-        shutdown: async () => undefined,
-      };
+      deps.agentSessionManager = fakeSessionManager(
+        async () =>
+          ({
+            key: { agentName: "main", channelThreadKey: "webchat:test" },
+            sessionId: "agent-session",
+            status: "idle",
+            sendTurn() {
+              return {
+                turnId: "turn-inbound-log",
+                events: (async function* () {
+                  yield { type: "result", content: "" };
+                })(),
+                turnContext: otelContext.active(),
+              };
+            },
+            subscribe: () => () => undefined,
+            onStatusChange: () => () => undefined,
+            interrupt: async () => undefined,
+            close: async () => undefined,
+          }) satisfies FakeSession,
+      );
       const app = createWebchatRuntime(deps).routes;
 
       const sessionRes = await app.request("/chat/sessions", {
@@ -1557,33 +1566,29 @@ describe("Webchat API", () => {
     let acquiredInit: AgentSessionInit | undefined;
     let sentTurn: AgentTurnInput | undefined;
     let sentOptions: SendTurnOptions | undefined;
-    deps.agentSessionManager = {
-      acquire: rs.fn(async (_key, init) => {
-        acquiredInit = init;
-        return {
-          key: { agentName: "main", channelThreadKey: "webchat:test" },
-          sessionId: "agent-session",
-          status: "idle",
-          sendTurn(input: AgentTurnInput, options?: SendTurnOptions) {
-            sentTurn = input;
-            sentOptions = options;
-            return {
-              turnId: "turn-1",
-              events: (async function* () {
-                yield { type: "result", content: "" };
-              })(),
-              turnContext: otelContext.active(),
-            };
-          },
-          subscribe: () => () => undefined,
-          onStatusChange: () => () => undefined,
-          interrupt: async () => undefined,
-          close: async () => undefined,
-        } satisfies AgentSession;
-      }),
-      peek: () => undefined,
-      shutdown: async () => undefined,
-    };
+    deps.agentSessionManager = fakeSessionManager(async (_key, init) => {
+      acquiredInit = init;
+      return {
+        key: { agentName: "main", channelThreadKey: "webchat:test" },
+        sessionId: "agent-session",
+        status: "idle",
+        sendTurn(input: AgentTurnInput, options?: SendTurnOptions) {
+          sentTurn = input;
+          sentOptions = options;
+          return {
+            turnId: "turn-1",
+            events: (async function* () {
+              yield { type: "result", content: "" };
+            })(),
+            turnContext: otelContext.active(),
+          };
+        },
+        subscribe: () => () => undefined,
+        onStatusChange: () => () => undefined,
+        interrupt: async () => undefined,
+        close: async () => undefined,
+      } satisfies FakeSession;
+    });
     const app = createWebchatRuntime(deps).routes;
 
     const sessionRes = await app.request("/chat/sessions", {
@@ -1798,26 +1803,22 @@ describe("Webchat API", () => {
       script: () => AsyncGenerator<never>,
       onEvent?: (evt: { event: string; data: string }) => void,
     ) => {
-      deps.agentSessionManager = {
-        acquire: rs.fn(async (key) => ({
-          key: { agentName: key.agentName, channelThreadKey: "webchat:stream" },
-          sessionId: "agent-session",
-          status: "idle",
-          sendTurn() {
-            return {
-              turnId: "turn-stream-1",
-              events: script(),
-              turnContext: otelContext.active(),
-            };
-          },
-          subscribe: () => () => undefined,
-          onStatusChange: () => () => undefined,
-          interrupt: async () => undefined,
-          close: async () => undefined,
-        })),
-        peek: () => undefined,
-        shutdown: async () => undefined,
-      } as unknown as typeof deps.agentSessionManager;
+      deps.agentSessionManager = fakeSessionManager(async (key) => ({
+        key: { agentName: key.agentName, channelThreadKey: "webchat:stream" },
+        sessionId: "agent-session",
+        status: "idle",
+        sendTurn() {
+          return {
+            turnId: "turn-stream-1",
+            events: script(),
+            turnContext: otelContext.active(),
+          };
+        },
+        subscribe: () => () => undefined,
+        onStatusChange: () => () => undefined,
+        interrupt: async () => undefined,
+        close: async () => undefined,
+      }));
       const sendMessageRun = rs.fn(async () => ({ status: "ok" }));
       deps.actionEngine = { run: sendMessageRun } as unknown as typeof deps.actionEngine;
       const app = createWebchatRuntime(deps).routes;
@@ -2332,54 +2333,51 @@ describe("Webchat API", () => {
       });
       const interrupt = rs.fn(async () => undefined);
       const wrongTurnInterrupt = rs.fn(async () => undefined);
-      deps.agentSessionManager = {
-        acquire: rs.fn(async () => ({
-          key: { agentName: "main" },
-          sessionId: "runtime",
-          status: "running",
-          sendTurn: () => ({
-            turnId: "cancel-turn",
-            interrupt,
-            turnContext: otelContext.active(),
-            events: (async function* () {
-              yield {
-                type: "turn_start",
-                turnId: "cancel-turn",
-                sessionId: "runtime",
-                userPrompt: "work",
-              };
-              yield {
-                type: "tool_use",
-                id: "edit-1",
-                tool: "Edit",
-                input: { file_path: "test.txt" },
-              };
-              yield {
-                type: "tool_result",
-                toolUseId: "edit-1",
-                tool: "Edit",
-                output: "File changed",
-              };
-              if (tail === "partial")
-                yield { type: "text_delta", content: "Already changed the file" };
-              await gate;
-              if (tail === "result") yield { type: "result", content: "Already changed the file" };
-              if (tail === "error") yield { type: "error", error: "Actual provider failure" };
-              yield {
-                type: "turn_end",
-                turnId: "cancel-turn",
-                status: tail === "error" ? "error" : "interrupted",
-                durationMs: 10,
-              };
-            })(),
-          }),
-          subscribe: () => () => undefined,
-          onStatusChange: () => () => undefined,
-          interrupt: wrongTurnInterrupt,
-        })),
-        peek: rs.fn(),
-        shutdown: async () => undefined,
-      } as unknown as typeof deps.agentSessionManager;
+      deps.agentSessionManager = fakeSessionManager(async () => ({
+        key: { agentName: "main", channelThreadKey: "webchat:cancel" },
+        sessionId: "runtime",
+        status: "running",
+        sendTurn: () => ({
+          turnId: "cancel-turn",
+          interrupt,
+          turnContext: otelContext.active(),
+          events: (async function* () {
+            yield {
+              type: "turn_start",
+              turnId: "cancel-turn",
+              sessionId: "runtime",
+              userPrompt: "work",
+            };
+            yield {
+              type: "tool_use",
+              id: "edit-1",
+              tool: "Edit",
+              input: { file_path: "test.txt" },
+            };
+            yield {
+              type: "tool_result",
+              toolUseId: "edit-1",
+              tool: "Edit",
+              output: "File changed",
+            };
+            if (tail === "partial")
+              yield { type: "text_delta", content: "Already changed the file" };
+            await gate;
+            if (tail === "result") yield { type: "result", content: "Already changed the file" };
+            if (tail === "error") yield { type: "error", error: "Actual provider failure" };
+            yield {
+              type: "turn_end",
+              turnId: "cancel-turn",
+              status: tail === "error" ? "error" : "interrupted",
+              durationMs: 10,
+            };
+          })(),
+        }),
+        subscribe: () => () => undefined,
+        onStatusChange: () => () => undefined,
+        interrupt: wrongTurnInterrupt,
+        close: async () => undefined,
+      }));
       const sendMessageRun = rs.fn(async () => ({ status: "ok" }));
       deps.actionEngine = { run: sendMessageRun } as unknown as typeof deps.actionEngine;
       const app = createWebchatRuntime(deps).routes;
@@ -2449,31 +2447,27 @@ describe("Webchat API", () => {
 
   it("expands a slash-skill command for the model but persists the raw text", async () => {
     let sentTurn: AgentTurnInput | undefined;
-    deps.agentSessionManager = {
-      acquire: rs.fn(async () => {
-        return {
-          key: { agentName: "main", channelThreadKey: "webchat:test" },
-          sessionId: "agent-session",
-          status: "idle",
-          sendTurn(input: AgentTurnInput) {
-            sentTurn = input;
-            return {
-              turnId: "turn-1",
-              events: (async function* () {
-                yield { type: "result", content: "" };
-              })(),
-              turnContext: otelContext.active(),
-            };
-          },
-          subscribe: () => () => undefined,
-          onStatusChange: () => () => undefined,
-          interrupt: async () => undefined,
-          close: async () => undefined,
-        } satisfies AgentSession;
-      }),
-      peek: () => undefined,
-      shutdown: async () => undefined,
-    };
+    deps.agentSessionManager = fakeSessionManager(async () => {
+      return {
+        key: { agentName: "main", channelThreadKey: "webchat:test" },
+        sessionId: "agent-session",
+        status: "idle",
+        sendTurn(input: AgentTurnInput) {
+          sentTurn = input;
+          return {
+            turnId: "turn-1",
+            events: (async function* () {
+              yield { type: "result", content: "" };
+            })(),
+            turnContext: otelContext.active(),
+          };
+        },
+        subscribe: () => () => undefined,
+        onStatusChange: () => () => undefined,
+        interrupt: async () => undefined,
+        close: async () => undefined,
+      } satisfies FakeSession;
+    });
     deps.skillCatalog = {
       get: (name) =>
         name === "app_creation" || name === "@ray/calendar:daily_brief"
@@ -2536,31 +2530,27 @@ describe("Webchat API", () => {
 
   it("expands a structured skillName field, winning over typed-slash text parsing", async () => {
     let sentTurn: AgentTurnInput | undefined;
-    deps.agentSessionManager = {
-      acquire: rs.fn(async () => {
-        return {
-          key: { agentName: "main", channelThreadKey: "webchat:test" },
-          sessionId: "agent-session",
-          status: "idle",
-          sendTurn(input: AgentTurnInput) {
-            sentTurn = input;
-            return {
-              turnId: "turn-1",
-              events: (async function* () {
-                yield { type: "result", content: "" };
-              })(),
-              turnContext: otelContext.active(),
-            };
-          },
-          subscribe: () => () => undefined,
-          onStatusChange: () => () => undefined,
-          interrupt: async () => undefined,
-          close: async () => undefined,
-        } satisfies AgentSession;
-      }),
-      peek: () => undefined,
-      shutdown: async () => undefined,
-    };
+    deps.agentSessionManager = fakeSessionManager(async () => {
+      return {
+        key: { agentName: "main", channelThreadKey: "webchat:test" },
+        sessionId: "agent-session",
+        status: "idle",
+        sendTurn(input: AgentTurnInput) {
+          sentTurn = input;
+          return {
+            turnId: "turn-1",
+            events: (async function* () {
+              yield { type: "result", content: "" };
+            })(),
+            turnContext: otelContext.active(),
+          };
+        },
+        subscribe: () => () => undefined,
+        onStatusChange: () => () => undefined,
+        interrupt: async () => undefined,
+        close: async () => undefined,
+      } satisfies FakeSession;
+    });
     // The structured field is the composer chip's explicit selection — it
     // resolves against the catalog independently of any typed text.
     deps.skillCatalog = {
@@ -2640,31 +2630,27 @@ describe("Webchat API", () => {
       let scripted: () => AsyncGenerator<unknown> = async function* () {
         yield { type: "result", content: "" };
       };
-      deps.agentSessionManager = {
-        acquire: rs.fn((key, _init) => {
-          acquiredAgents.push(key.agentName);
-          const session = {
-            key: { agentName: key.agentName, channelThreadKey: "webchat:suspend" },
-            sessionId: "agent-session",
-            status: "idle",
-            sendTurn(input: AgentTurnInput) {
-              sentTurns.push(input);
-              return {
-                turnId: `turn-${sentTurns.length}`,
-                events: scripted() as AsyncGenerator<never>,
-                turnContext: otelContext.active(),
-              };
-            },
-            subscribe: () => () => undefined,
-            onStatusChange: () => () => undefined,
-            interrupt: async () => undefined,
-            close: async () => undefined,
-          } satisfies AgentSession;
-          return Promise.resolve(session);
-        }),
-        peek: () => undefined,
-        shutdown: async () => undefined,
-      };
+      deps.agentSessionManager = fakeSessionManager((key, _init) => {
+        acquiredAgents.push(key.agentName);
+        const session = {
+          key: { agentName: key.agentName, channelThreadKey: "webchat:suspend" },
+          sessionId: "agent-session",
+          status: "idle",
+          sendTurn(input: AgentTurnInput) {
+            sentTurns.push(input);
+            return {
+              turnId: `turn-${sentTurns.length}`,
+              events: scripted() as AsyncGenerator<never>,
+              turnContext: otelContext.active(),
+            };
+          },
+          subscribe: () => () => undefined,
+          onStatusChange: () => () => undefined,
+          interrupt: async () => undefined,
+          close: async () => undefined,
+        } satisfies FakeSession;
+        return Promise.resolve(session);
+      });
       return {
         sentTurns,
         acquiredAgents,
@@ -3839,30 +3825,26 @@ describe("Webchat API", () => {
         createdAt: new Date(),
         lastActiveAt: new Date(),
       });
-      deps.agentSessionManager = {
-        acquire: rs.fn(async () => {
-          return {
-            key: { agentName: "main", channelThreadKey: "webchat:branch-fork-session" },
-            sessionId: "fork-agent-session",
-            status: "idle",
-            sendTurn() {
-              return {
-                turnId: "follow-up-turn",
-                events: (async function* () {
-                  yield { type: "result", content: "It fails closed." };
-                })(),
-                turnContext: otelContext.active(),
-              };
-            },
-            subscribe: () => () => undefined,
-            onStatusChange: () => () => undefined,
-            interrupt: async () => undefined,
-            close: async () => undefined,
-          } satisfies AgentSession;
-        }),
-        peek: () => undefined,
-        shutdown: async () => undefined,
-      };
+      deps.agentSessionManager = fakeSessionManager(async () => {
+        return {
+          key: { agentName: "main", channelThreadKey: "webchat:branch-fork-session" },
+          sessionId: "fork-agent-session",
+          status: "idle",
+          sendTurn() {
+            return {
+              turnId: "follow-up-turn",
+              events: (async function* () {
+                yield { type: "result", content: "It fails closed." };
+              })(),
+              turnContext: otelContext.active(),
+            };
+          },
+          subscribe: () => () => undefined,
+          onStatusChange: () => () => undefined,
+          interrupt: async () => undefined,
+          close: async () => undefined,
+        } satisfies FakeSession;
+      });
       const accepted = await app.request(`/chat/sessions/branch-fork-session/turns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3950,32 +3932,28 @@ describe("Webchat API", () => {
       );
       let acquiredKey: unknown;
       let acquiredInit: AgentSessionInit | undefined;
-      deps.agentSessionManager = {
-        acquire: rs.fn(async (key, init) => {
-          acquiredKey = key;
-          acquiredInit = init;
-          return {
-            key: { agentName: "main", channelThreadKey: `webchat:${PROMOTED_ID}` },
-            sessionId: "fork-agent-session",
-            status: "idle",
-            sendTurn() {
-              return {
-                turnId: "follow-up-turn",
-                events: (async function* () {
-                  yield { type: "result", content: "Because the retry budget is per turn." };
-                })(),
-                turnContext: otelContext.active(),
-              };
-            },
-            subscribe: () => () => undefined,
-            onStatusChange: () => () => undefined,
-            interrupt: async () => undefined,
-            close: async () => undefined,
-          } satisfies AgentSession;
-        }),
-        peek: () => undefined,
-        shutdown: async () => undefined,
-      };
+      deps.agentSessionManager = fakeSessionManager(async (key, init) => {
+        acquiredKey = key;
+        acquiredInit = init;
+        return {
+          key: { agentName: "main", channelThreadKey: `webchat:${PROMOTED_ID}` },
+          sessionId: "fork-agent-session",
+          status: "idle",
+          sendTurn() {
+            return {
+              turnId: "follow-up-turn",
+              events: (async function* () {
+                yield { type: "result", content: "Because the retry budget is per turn." };
+              })(),
+              turnContext: otelContext.active(),
+            };
+          },
+          subscribe: () => () => undefined,
+          onStatusChange: () => () => undefined,
+          interrupt: async () => undefined,
+          close: async () => undefined,
+        } satisfies FakeSession;
+      });
       const app = createWebchatRuntime(deps).routes;
 
       const res = await app.request(`/chat/sessions/${PROMOTED_ID}/turns`, {
@@ -4005,31 +3983,27 @@ describe("Webchat API", () => {
         withThread(PROMOTED_ID),
       );
       let acquiredKey: unknown;
-      deps.agentSessionManager = {
-        acquire: rs.fn(async (key) => {
-          acquiredKey = key;
-          return {
-            key: { agentName: "main", channelThreadKey: `webchat:${PROMOTED_ID}` },
-            sessionId: "fork-agent-session",
-            status: "idle",
-            sendTurn() {
-              return {
-                turnId: "follow-up-turn",
-                events: (async function* () {
-                  yield { type: "result", content: "ok" };
-                })(),
-                turnContext: otelContext.active(),
-              };
-            },
-            subscribe: () => () => undefined,
-            onStatusChange: () => () => undefined,
-            interrupt: async () => undefined,
-            close: async () => undefined,
-          } satisfies AgentSession;
-        }),
-        peek: () => undefined,
-        shutdown: async () => undefined,
-      };
+      deps.agentSessionManager = fakeSessionManager(async (key) => {
+        acquiredKey = key;
+        return {
+          key: { agentName: "main", channelThreadKey: `webchat:${PROMOTED_ID}` },
+          sessionId: "fork-agent-session",
+          status: "idle",
+          sendTurn() {
+            return {
+              turnId: "follow-up-turn",
+              events: (async function* () {
+                yield { type: "result", content: "ok" };
+              })(),
+              turnContext: otelContext.active(),
+            };
+          },
+          subscribe: () => () => undefined,
+          onStatusChange: () => () => undefined,
+          interrupt: async () => undefined,
+          close: async () => undefined,
+        } satisfies FakeSession;
+      });
       const app = createWebchatRuntime(deps).routes;
 
       await app.request(`/chat/sessions/${PROMOTED_ID}/turns`, {
@@ -4449,3 +4423,48 @@ describe("Webchat API", () => {
     });
   });
 });
+
+type FakeSession = Omit<AgentSession, "submitInput" | "runForkedTurn">;
+
+/**
+ * A manager over fake sessions that script only `sendTurn`. Every submitted
+ * input starts its own turn, so a second send while one runs is a separate
+ * queued turn.
+ */
+function fakeSessionManager(
+  acquire: (key: AgentSessionKey, init?: AgentSessionInit) => Promise<FakeSession> | FakeSession,
+): AgentSessionManager {
+  return {
+    acquire: rs.fn(async (key: AgentSessionKey, init?: AgentSessionInit) =>
+      withSubmitInput(await acquire(key, init)),
+    ),
+    acquireBySessionId: async () => {
+      throw new Error("fake manager cannot resume by session id");
+    },
+    peek: () => undefined,
+    findWorkingDirBySessionId: () => undefined,
+    shutdown: async () => undefined,
+  };
+}
+
+function withSubmitInput(fake: FakeSession): AgentSession {
+  return Object.assign(fake, {
+    submitInput: (
+      input: AgentTurnInput & { inputId: string },
+      options: SubmitInputOptions,
+    ): AgentInputReceipt => {
+      const handle = fake.sendTurn(input, options);
+      options.onTurn(handle);
+      void options.onInputStatus?.({
+        type: "input_status",
+        inputId: input.inputId,
+        turnId: handle.turnId,
+        state: "submitted",
+      });
+      return { inputId: input.inputId, turnId: handle.turnId, disposition: "started" };
+    },
+    runForkedTurn: (): never => {
+      throw new Error("fake session cannot fork");
+    },
+  });
+}
