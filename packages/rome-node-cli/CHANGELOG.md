@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.3](https://github.com/Max-Samson/rome/compare/node-v0.1.3...node-v0.1.3) (2026-10-10)
+
+
+### Features
+
+* **node:** send raw bytes between devices and add rome-node cp ([#821](https://github.com/Max-Samson/rome/issues/821)) ([617a42a](https://github.com/Max-Samson/rome/commit/617a42abd95dab06e7600ae4e7638dcdb27c5a8c))
+* **node:** share a WebSocket daemon and show device status in Settings ([#473](https://github.com/Max-Samson/rome/issues/473)) ([b0cccab](https://github.com/Max-Samson/rome/commit/b0cccab2336a7d214489d7ab7d1791a4a4bffbaf))
+* **node:** support device-code authorization ([#492](https://github.com/Max-Samson/rome/issues/492)) ([b2a272d](https://github.com/Max-Samson/rome/commit/b2a272db7a0d033bcc3e9ce3c199475f43fd8433))
+* publish rome node ([#481](https://github.com/Max-Samson/rome/issues/481)) ([ea274dd](https://github.com/Max-Samson/rome/commit/ea274dd67b7de40c4de4dcee53886c33c0b0a9d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @rome-os/node-core bumped to 0.1.3
+
 ## [0.1.3](https://github.com/rome-os/rome/compare/node-v0.1.1...node-v0.1.3) (2026-10-10)
 
 
