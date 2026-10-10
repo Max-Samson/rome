@@ -278,11 +278,9 @@ export function connectionsRoutes(deps: ApiDeps): Hono {
     });
   });
 
-  /** Transitional: the boot reconciler re-imports a retained legacy
-   *  `provider_accounts` row over an unauthorized grant, so a teardown that
-   *  only touches the ledger would resurrect it on the next boot. Tearing
-   *  down an OAuth provider must also drop its legacy row until that table
-   *  is retired. */
+  /** Tearing down an OAuth provider also drops its legacy `provider_accounts`
+   *  row, so the plaintext token it holds does not outlive the disconnect.
+   *  Remove this along with the table. */
   const removeLegacyProviderRow = async (service: string): Promise<void> => {
     if (isOAuthProvider(service)) await removeProviderAccount(deps.db, service);
   };

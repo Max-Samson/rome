@@ -3,9 +3,8 @@
 //
 // Tearing down a Rome Cloud-OAuth provider removes the legacy providerAccounts
 // row AND revokes the grant-ledger credential (so the registry's connection
-// state relocks). Dropping the legacy row matters: the boot reconciler
-// re-imports a retained row over an unauthorized grant, so a ledger-only
-// teardown would resurrect on the next boot. The route does not clear the tmpfs
+// state relocks). Dropping the legacy row matters: it holds the provider's
+// token in plaintext. The route does not clear the tmpfs
 // file / gh shell auth itself: the revoke transition drives the registry's
 // custody hook, which clears them. The custody libs are faked so nothing hits
 // the disk or spawns `gh`; a real ConnectionRegistry holding an authorized
@@ -38,7 +37,6 @@ const {
 rs.mock("../../lib/provider-accounts.js", () => ({
   ...providerAccountsModule,
   removeProviderAccount,
-  getProviderTokenBundle: rs.fn(async () => null),
 }));
 // Both the sync and clear halves are stubbed: `makeAuthorizedRegistry` imports a
 // bundle (→ custody sync fires) before the test tears down (→ custody clear).
