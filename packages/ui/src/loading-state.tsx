@@ -71,7 +71,7 @@ export const LoaderGrid = forwardRef<HTMLSpanElement, LoaderGridProps>(function 
         <span
           key={index}
           data-slot="loader-grid-cell"
-          className={cn("size-1 bg-primary motion-reduce:animate-none", round && "rounded-full")}
+          className={cn("size-1 bg-primary motion-reduce:animate-none!", round && "rounded-full")}
           style={{
             opacity: delay === null ? 0.07 : 0.15,
             animation:
@@ -84,19 +84,27 @@ export const LoaderGrid = forwardRef<HTMLSpanElement, LoaderGridProps>(function 
 });
 
 /**
- * Live timer tracking elapsed time in tenths of a second.
  * Renders as "X.Xs" for <60s, and "Xm X.Xs" thereafter.
+ * A finite startedAt is a Unix epoch timestamp in milliseconds, measured against
+ * the wall clock and clamped at zero. Otherwise, counts 100ms ticks, pausing
+ * while disabled and continuing the count when enabled again.
  */
-export function useElapsedTimer(enabled = true): string {
+export function useElapsedTimer(enabled = true, startedAt?: number): string {
   const [ds, setDs] = useState(0);
+  const [, refresh] = useState(0);
+  const start = startedAt !== undefined && Number.isFinite(startedAt) ? startedAt : undefined;
 
   useEffect(() => {
     if (!enabled) return;
-    const t = setInterval(() => setDs((d) => d + 1), 100);
+    const t = setInterval(() => {
+      if (start === undefined) setDs((d) => d + 1);
+      else refresh((tick) => tick + 1);
+    }, 100);
     return () => clearInterval(t);
-  }, [enabled]);
+  }, [enabled, start]);
 
-  const total = ds / 10;
+  const total =
+    start === undefined ? ds / 10 : Math.round(Math.max(0, Date.now() - start) / 100) / 10;
   if (total < 60) return `${total.toFixed(1)}s`;
   return `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`;
 }
@@ -108,6 +116,10 @@ export interface LoadingStateProps extends ComponentProps<"div"> {
    * The status label. Defaults to "Churning".
    */
   label?: string;
+  /** Whether to render the visible label. Defaults to true. Does not affect ariaLabel. */
+  showLabel?: boolean;
+  /** Classes applied only to the visible label. */
+  labelClassName?: string;
   /**
    * Loader animation pattern:
    * - `Drive` (default): square cells, chevron wavefront driving right
@@ -119,6 +131,8 @@ export interface LoadingStateProps extends ComponentProps<"div"> {
    * Whether to display the live elapsed timer in tabular figures. Defaults to true.
    */
   elapsed?: boolean;
+  /** Unix epoch milliseconds for wall-clock elapsed time. Non-finite values use tick counting. */
+  startedAt?: number;
   /**
    * Accessible announcement label for assistive tech.
    */
@@ -134,16 +148,29 @@ export interface LoadingStateProps extends ComponentProps<"div"> {
  * the text shimmer while allowing the elapsed timer to continue ticking.
  */
 export const LoadingState = forwardRef<HTMLDivElement, LoadingStateProps>(function LoadingState(
-  { label = "Churning", variant = "Drive", elapsed = true, ariaLabel, className, ...rest },
+  {
+    label = "Churning",
+    showLabel = true,
+    labelClassName,
+    variant = "Drive",
+    elapsed = true,
+    startedAt,
+    ariaLabel,
+    className,
+    ...rest
+  },
   ref,
 ) {
-  const liveElapsed = useElapsedTimer(elapsed);
+  const liveElapsed = useElapsedTimer(elapsed, startedAt);
   const pattern = LOADING_STATE_PATTERNS[variant] ?? LOADING_STATE_PATTERNS.Drive;
 
-  const labelEl = (
+  const labelEl = showLabel ? (
     <span
       data-slot="loading-state-label"
-      className="bg-clip-text text-badge text-transparent motion-reduce:animate-none"
+      className={cn(
+        "bg-clip-text text-badge text-transparent motion-reduce:animate-none! motion-reduce:text-muted-foreground",
+        labelClassName,
+      )}
       style={{
         backgroundImage:
           "linear-gradient(90deg, var(--muted-foreground) 35%, var(--primary) 50%, var(--muted-foreground) 65%)",
@@ -153,12 +180,14 @@ export const LoadingState = forwardRef<HTMLDivElement, LoadingStateProps>(functi
     >
       {label}
     </span>
-  );
+  ) : null;
 
+  // Elapsed ticks are visual feedback, not status announcements.
   const elapsedEl = elapsed ? (
     <span
       data-slot="loading-state-elapsed"
-      className="font-mono text-aux text-muted-foreground tabular-nums"
+      aria-hidden="true"
+      className="shrink-0 whitespace-nowrap font-mono text-aux text-muted-foreground tabular-nums"
     >
       {liveElapsed}
     </span>
