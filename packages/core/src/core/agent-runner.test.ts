@@ -71,6 +71,7 @@ import type {
   AgentTurnStartedEvent,
   ProviderSessionResetPolicy,
 } from "@rome-os/app-runtime";
+import { testChannelSurface } from "../test/channel-surface.js";
 
 function createTestModelResolver({ providers }: { providers: ModelProvider[] }) {
   return createModelResolver({
@@ -573,7 +574,12 @@ describe("AgentRunner", () => {
       appCatalog: opts.appCatalog,
     });
     const first = await collectMessages(
-      runner.run({ agentName, prompt: "Hi", channelThreadKey: "webchat:fork-1" }),
+      runner.run({
+        agentName,
+        prompt: "Hi",
+        channelThreadKey: "webchat:fork-1",
+        threadContext: { channel: "webchat", threadId: "fork-1" },
+      }),
     );
     const start = first.find((m) => m.type === "turn_start") as { sessionId: string };
     return collectMessages(
@@ -1627,6 +1633,7 @@ describe("AgentRunner", () => {
       capabilityDiscovery: new CapabilityDiscovery(),
       skillCatalog: new SkillCatalog(artifactIdentity),
       lifecycleDispatcher: lifecycleDispatcher ?? createAgentLifecycleDispatcher(),
+      channelSurface: testChannelSurface,
       activeSubagentRegistry,
       subagentExecutionService: createSubagentExecutionService({
         webchatRepo: new WebChatRepository(testDb.db),
@@ -3285,6 +3292,7 @@ describe("AgentRunner", () => {
           agentName: "test-main",
           prompt: "Build prompt",
           channelThreadKey: "webchat:prompt-surface",
+          threadContext: { channel: "webchat", threadId: "prompt-surface" },
         }),
       );
 
@@ -3295,6 +3303,7 @@ describe("AgentRunner", () => {
           agentName: "test-main",
           prompt: "Build prompt",
           channelThreadKey: "telegram:prompt-surface",
+          threadContext: { channel: "telegram", threadId: "prompt-surface" },
         }),
       );
 
@@ -3439,6 +3448,54 @@ describe("AgentRunner", () => {
       );
 
       expect(initUserPrompt(messages)).not.toContain("<thread_context>");
+      await manager.shutdown();
+    });
+
+    it("skips stored-message context for a channel whose surface needs none", async () => {
+      const webchatRepo = new WebChatRepository(testDb.db);
+      const conversation = await webchatRepo.ensureChannelConversation({
+        channel: "discord",
+        threadId: "quiet-context",
+        agentName: "main",
+      });
+      await webchatRepo.addConversationMessage({
+        sessionId: conversation.id,
+        role: "notification",
+        content: JSON.stringify([{ type: "text", content: "ambient update" }]),
+        platformMessageId: "ambient-message",
+        senderName: "Bob",
+        createdAt: new Date("2026-08-03T08:01:00.000Z"),
+      });
+
+      const providerPrompts: string[] = [];
+      const provider: ModelProvider = {
+        id: "mock",
+        displayName: "mock-no-conversation-context",
+        builtinTools: new Set<string>(),
+        openSession: makeOpenSessionFromRun("mock", async function* (input) {
+          providerPrompts.push(input.prompt);
+          yield { type: "result", content: "ok" };
+        }),
+      };
+      // The same channel conversation as above, but its surface says every
+      // message already reaches the agent, as webchat's does.
+      const manager = createAgentSessionManager({
+        ...managerDeps(createTestModelResolver({ providers: [provider] })),
+        channelSurface: () => ({ interactiveCards: false, promptContext: false }),
+      });
+      await collectMessages(
+        new AgentRunner(manager, agentLoader).run({
+          agentName: "test-main",
+          prompt: "current message",
+          channelThreadKey: "discord:quiet-context",
+          romeSessionId: conversation.id,
+          threadContext: { channel: "discord", threadId: "quiet-context" },
+        }),
+      );
+
+      expect(providerPrompts).toHaveLength(1);
+      expect(providerPrompts[0]).not.toContain("<conversation_context>");
+      expect(providerPrompts[0]).not.toContain("ambient update");
       await manager.shutdown();
     });
 
