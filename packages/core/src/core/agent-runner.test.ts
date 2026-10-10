@@ -239,7 +239,7 @@ describe("AgentRunner", () => {
     // Webchat retains long-lived conversation semantics across reacquires.
     const key = {
       agentName: "test-code-backed",
-      channelThreadKey: "webchat:session-reuse:large-model:opus",
+      channelThreadKey: "webchat:session-reuse",
     };
     const first = await manager.acquire(key);
     const second = await manager.acquire(key);
@@ -3923,7 +3923,7 @@ describe("AgentRunner", () => {
       const session = await manager.acquire(
         {
           agentName: "test-main",
-          channelThreadKey: "webchat:session-1:large-model:gpt-5-6-terra",
+          channelThreadKey: "webchat:session-1",
         },
         { selectionId: "gpt-5-6-terra" },
       );
@@ -3935,7 +3935,7 @@ describe("AgentRunner", () => {
       expect(openAiSessions[0].model).toBe("gpt-5.6-terra");
     });
 
-    it("restores the selected model from the persisted session key on explicit cold resume", async () => {
+    it("restores the selected model from the session pin on explicit cold resume", async () => {
       const openAiSessions: ModelSessionParams[] = [];
       const openai: ModelProvider = {
         id: "openai",
@@ -3958,7 +3958,7 @@ describe("AgentRunner", () => {
       const firstManager = createAgentSessionManager(managerDeps(modelResolver));
       const key = {
         agentName: "test-main",
-        channelThreadKey: "webchat:session-cold:large-model:gpt-5-6-terra",
+        channelThreadKey: "webchat:session-cold",
       };
       const firstSession = await firstManager.acquire(key, { selectionId: "gpt-5-6-terra" });
       await collectMessages(firstSession.sendTurn({ prompt: "Start" }).events);
@@ -4663,13 +4663,20 @@ describe("AgentRunner", () => {
       });
 
       const repo = new SessionsRepository(testDb.db);
-      // A pre-cutover row (model NULL) whose webchat key pins a Claude selection,
+      // A pre-cutover row (model NULL) whose chat stores a Claude selection,
       // while the stored provider thread is Codex. With the resume guard removed,
       // the single precedence rule honors the persisted selection instead of
       // dropping it on provider mismatch.
+      await new WebChatRepository(testDb.db).createSession(
+        "legacy-mismatch",
+        "Legacy chat",
+        undefined,
+        undefined,
+        "claude-opus",
+      );
       const legacyId = await repo.create({
         agentName: "test-main",
-        channelThreadKey: "webchat:legacy-mismatch:large-model:claude-opus",
+        channelThreadKey: "webchat:legacy-mismatch",
         status: "active",
       });
       await repo.setProviderInfo(legacyId, "openai", "codex-thread");
@@ -4677,7 +4684,16 @@ describe("AgentRunner", () => {
       const manager = createAgentSessionManager(managerDeps(modelResolver));
       const runner = new AgentRunner(manager, agentLoader);
       const messages = await collectMessages(
-        runner.run({ agentName: "test-main", sessionId: legacyId, prompt: "Continue" }),
+        runner.run({
+          agentName: "test-main",
+          sessionId: legacyId,
+          prompt: "Continue",
+          threadContext: {
+            channel: "webchat",
+            threadId: "legacy-mismatch",
+            romeSessionId: "legacy-mismatch",
+          },
+        }),
       );
 
       // The resume opens Claude Opus on a fresh provider thread (provider changed
@@ -4692,6 +4708,114 @@ describe("AgentRunner", () => {
       });
       expect(claudeOpens[0].providerThreadId).toBeUndefined();
       expect(codexOpens).toHaveLength(0);
+      await manager.shutdown();
+    });
+
+    it("a legacy resume without a thread context reads the selection through its key", async () => {
+      const state = {
+        codex: { loggedIn: true, quotaExhausted: false, solAccess: true, lunaAccess: true },
+        claude: { loggedIn: true, quotaExhausted: false },
+      };
+      const codexOpens: ModelSessionParams[] = [];
+      const claudeOpens: ModelSessionParams[] = [];
+      const modelResolver = createModelResolver({
+        providers: [codexProvider(codexOpens), claudeProvider(claudeOpens)],
+        aiToolState: { get: () => state, refresh: async () => state },
+      });
+
+      const repo = new SessionsRepository(testDb.db);
+      // A pre-cutover row (model NULL) whose chat stores a Claude selection,
+      // while the stored provider thread is Codex. With the resume guard removed,
+      // the single precedence rule honors the persisted selection instead of
+      // dropping it on provider mismatch.
+      await new WebChatRepository(testDb.db).createSession(
+        "legacy-no-context",
+        "Legacy chat",
+        undefined,
+        undefined,
+        "claude-opus",
+      );
+      const legacyId = await repo.create({
+        agentName: "test-main",
+        channelThreadKey: "webchat:legacy-no-context",
+        status: "active",
+      });
+      await repo.setProviderInfo(legacyId, "openai", "codex-thread");
+
+      const manager = createAgentSessionManager(managerDeps(modelResolver));
+      const runner = new AgentRunner(manager, agentLoader);
+      const messages = await collectMessages(
+        runner.run({
+          agentName: "test-main",
+          sessionId: legacyId,
+          prompt: "Continue",
+        }),
+      );
+
+      // The resume opens Claude Opus on a fresh provider thread (provider changed
+      // from Codex), never the stored-provider tier resolution.
+      expect(messages.find((message) => message.type === "result")).toMatchObject({
+        content: "claude-opus-4-8[1m]",
+      });
+      expect(claudeOpens).toHaveLength(1);
+      expect(claudeOpens[0]).toMatchObject({
+        model: "claude-opus-4-8[1m]",
+        isNewSession: true,
+      });
+      expect(claudeOpens[0].providerThreadId).toBeUndefined();
+      expect(codexOpens).toHaveLength(0);
+      await manager.shutdown();
+    });
+
+    it("a legacy subagent resume ignores the parent chat's persisted selection", async () => {
+      const state = {
+        codex: { loggedIn: true, quotaExhausted: false, solAccess: true, lunaAccess: true },
+        claude: { loggedIn: true, quotaExhausted: false },
+      };
+      const codexOpens: ModelSessionParams[] = [];
+      const claudeOpens: ModelSessionParams[] = [];
+      const modelResolver = createModelResolver({
+        providers: [codexProvider(codexOpens), claudeProvider(claudeOpens)],
+        aiToolState: { get: () => state, refresh: async () => state },
+      });
+
+      const repo = new SessionsRepository(testDb.db);
+      // The parent chat stores a Claude selection. Its subagent's legacy row
+      // (model NULL) ran on Codex, and the subagent opens with the parent's
+      // thread context, so the chat's selection must not reach it.
+      await new WebChatRepository(testDb.db).createSession(
+        "legacy-parent",
+        "Legacy chat",
+        undefined,
+        undefined,
+        "claude-opus",
+      );
+      const legacyId = await repo.create({
+        agentName: "test-main",
+        channelThreadKey: "webchat:legacy-parent:subagent:child-1",
+        status: "active",
+      });
+      await repo.setProviderInfo(legacyId, "openai", "codex-thread");
+
+      const manager = createAgentSessionManager(managerDeps(modelResolver), {
+        isSubagent: true,
+      });
+      const runner = new AgentRunner(manager, agentLoader);
+      await collectMessages(
+        runner.run({
+          agentName: "test-main",
+          sessionId: legacyId,
+          prompt: "Continue",
+          threadContext: {
+            channel: "webchat",
+            threadId: "legacy-parent",
+            romeSessionId: "legacy-parent",
+          },
+        }),
+      );
+
+      expect(claudeOpens).toHaveLength(0);
+      expect(codexOpens).toHaveLength(1);
       await manager.shutdown();
     });
   });
