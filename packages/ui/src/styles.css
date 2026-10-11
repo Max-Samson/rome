@@ -870,7 +870,7 @@
 
 /* ─────────────────────────── LOADING STATE ANIMATIONS ───────────────────────
    Keyframes for LoadingState / LoaderGrid pixel-grid animations. */
-@keyframes pixel-on {
+@keyframes rome-pixel-on {
   0%,
   100% {
     opacity: 0.15;
@@ -884,7 +884,7 @@
   }
 }
 
-@keyframes shimmer-text {
+@keyframes rome-shimmer-text {
   from {
     background-position: 150% center;
   }

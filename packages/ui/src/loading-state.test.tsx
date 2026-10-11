@@ -71,7 +71,7 @@ describe("LoadingState", () => {
     // Perimeter cells should have pixel-on animation
     const cornerCell = cells[0] as HTMLElement;
     expect(cornerCell.style.opacity).toBe("0.15");
-    expect(cornerCell.style.animation).toContain("pixel-on 950ms");
+    expect(cornerCell.style.animation).toContain("rome-pixel-on 950ms");
   });
 
   it("takes a caller-provided label", () => {
@@ -136,7 +136,7 @@ describe("LoadingState", () => {
     expect(container.querySelector('[data-slot="loading-state-label"]')).toBeNull();
     expect(screen.queryByText("Churning")).toBeNull();
     const cell = container.querySelector('[data-slot="loader-grid-cell"]') as HTMLElement;
-    expect(cell.style.animation).toContain("pixel-on 650ms");
+    expect(cell.style.animation).toContain("rome-pixel-on 650ms");
     act(() => rs.advanceTimersByTime(100));
     expect(screen.getByText("0.1s")).toBeDefined();
 
@@ -275,8 +275,8 @@ describe("useElapsedTimer", () => {
   });
 });
 
-describe("useElapsedTimer compatibility", () => {
-  it("counts 100ms ticks, pauses and resumes through the original single argument", () => {
+describe("useElapsedTimer", () => {
+  it("tracks wall-clock elapsed time while enabled", () => {
     rs.useFakeTimers();
     const timer = renderHook(({ enabled }) => useElapsedTimer(enabled), {
       initialProps: { enabled: true },
@@ -295,19 +295,20 @@ describe("useElapsedTimer compatibility", () => {
     expect(timer.result.current).toBe("1m 1.2s");
     timer.rerender({ enabled: true });
     expect(rs.getTimerCount()).toBe(1);
+    expect(timer.result.current).toBe("1m 6.2s");
     act(() => rs.advanceTimersByTime(100));
-    expect(timer.result.current).toBe("1m 1.3s");
+    expect(timer.result.current).toBe("1m 6.3s");
     timer.unmount();
     expect(rs.getTimerCount()).toBe(0);
   });
 
-  it("does not turn legacy tick counting into wall-clock measurement", () => {
+  it("does not drift when system time advances in background", () => {
     rs.useFakeTimers();
     rs.setSystemTime(new Date("2026-10-10T12:00:00Z"));
     const { result, unmount } = renderHook(() => useElapsedTimer());
     rs.setSystemTime(new Date("2026-10-10T13:00:00Z"));
     act(() => rs.advanceTimersByTime(100));
-    expect(result.current).toBe("0.1s");
+    expect(result.current).toBe("60m 0.1s");
     unmount();
     expect(rs.getTimerCount()).toBe(0);
   });
@@ -387,12 +388,12 @@ describe("LoadingState wall-clock elapsed time", () => {
     NaN,
     Infinity,
     -Infinity,
-  ])("falls back to tick counting for invalid origin %s", (startedAt) => {
+  ])("falls back to mount time for invalid origin %s", (startedAt) => {
     render(<LoadingState startedAt={startedAt} />);
     expect(screen.getByText("0.0s")).toBeDefined();
     rs.setSystemTime(now + 60_000);
     act(() => rs.advanceTimersByTime(100));
-    expect(screen.getByText("0.1s")).toBeDefined();
+    expect(screen.getByText("1m 0.1s")).toBeDefined();
     expect(screen.queryByText(/NaN|Infinity/)).toBeNull();
   });
 
@@ -444,10 +445,10 @@ describe("LoadingState wall-clock elapsed time", () => {
     expect(result.current).toBe("1.3s");
 
     rerender({ startedAt: NaN });
-    expect(result.current).toBe("0.2s");
+    expect(result.current).toBe("0.3s");
     expect(rs.getTimerCount()).toBe(1);
     act(() => rs.advanceTimersByTime(100));
-    expect(result.current).toBe("0.3s");
+    expect(result.current).toBe("0.4s");
     rerender({ startedAt: undefined });
     expect(rs.getTimerCount()).toBe(1);
     unmount();
@@ -505,6 +506,9 @@ describe("LoadingState motion cascade", () => {
     expect(css).toContain("animation: none !important");
     if (slot === "loading-state-label") {
       expect(css).toContain("color: var(--muted-foreground)");
+    }
+    if (slot === "loader-grid-cell") {
+      expect(css).toContain("opacity: 60% !important");
     }
   });
 });

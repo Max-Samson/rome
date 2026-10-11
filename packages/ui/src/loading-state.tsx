@@ -23,23 +23,22 @@ const orbit = Array.from({ length: 9 }, (_, i) => {
   return k === -1 ? null : k * 110;
 });
 
-export interface LoaderPattern {
+export type LoadingStateVariant = "Drive" | "Dots" | "Orbit";
+
+interface LoaderPattern {
   delays: (number | null)[];
   dur: number;
   round: boolean;
 }
 
-export const LOADING_STATE_PATTERNS: Record<"Drive" | "Dots" | "Orbit", LoaderPattern> = {
+const PATTERNS: Record<LoadingStateVariant, LoaderPattern> = {
   Drive: { delays: chevron, dur: 650, round: false },
   Dots: { delays: chevron, dur: 650, round: true },
   Orbit: { delays: orbit, dur: 950, round: false },
 };
 
 export interface LoaderGridProps extends ComponentProps<"span"> {
-  delays?: (number | null)[];
-  dur?: number;
-  round?: boolean;
-  variant?: "Drive" | "Dots" | "Orbit";
+  variant?: LoadingStateVariant;
 }
 
 /**
@@ -48,21 +47,18 @@ export interface LoaderGridProps extends ComponentProps<"span"> {
  * styled in the active system theme color (`bg-primary`).
  */
 export const LoaderGrid = forwardRef<HTMLSpanElement, LoaderGridProps>(function LoaderGrid(
-  { delays: customDelays, dur: customDur, round: customRound, variant, className, style, ...rest },
+  { variant = "Drive", className, style, ...rest },
   ref,
 ) {
-  const pattern = variant
-    ? (LOADING_STATE_PATTERNS[variant] ?? LOADING_STATE_PATTERNS.Drive)
-    : null;
-  const delays = customDelays ?? pattern?.delays ?? chevron;
-  const dur = customDur ?? pattern?.dur ?? 650;
-  const round = customRound ?? pattern?.round ?? false;
+  const pattern = PATTERNS[variant] ?? PATTERNS.Drive;
+  const { delays, dur, round } = pattern;
 
   return (
     <span
       ref={ref}
       aria-hidden="true"
       data-slot="loader-grid"
+      data-variant={variant}
       className={cn("grid shrink-0 grid-cols-[repeat(3,4px)]", className)}
       style={{ gap: "1.5px", ...style }}
       {...rest}
@@ -71,11 +67,15 @@ export const LoaderGrid = forwardRef<HTMLSpanElement, LoaderGridProps>(function 
         <span
           key={index}
           data-slot="loader-grid-cell"
-          className={cn("size-1 bg-primary motion-reduce:animate-none!", round && "rounded-full")}
+          className={cn(
+            "size-1 bg-primary motion-reduce:animate-none!",
+            delay !== null && "motion-reduce:opacity-60!",
+            round && "rounded-full",
+          )}
           style={{
             opacity: delay === null ? 0.07 : 0.15,
             animation:
-              delay === null ? "none" : `pixel-on ${dur}ms ease-in-out ${delay}ms infinite`,
+              delay === null ? "none" : `rome-pixel-on ${dur}ms ease-in-out ${delay}ms infinite`,
           }}
         />
       ))}
@@ -86,31 +86,26 @@ export const LoaderGrid = forwardRef<HTMLSpanElement, LoaderGridProps>(function 
 /**
  * Renders as "X.Xs" for <60s, and "Xm X.Xs" thereafter.
  * A finite startedAt is a Unix epoch timestamp in milliseconds, measured against
- * the wall clock and clamped at zero. Otherwise, counts 100ms ticks, pausing
- * while disabled and continuing the count when enabled again.
+ * the wall clock and clamped at zero. If omitted or invalid, computes from
+ * hook mount time against the wall clock so timers do not drift in background tabs.
  */
 export function useElapsedTimer(enabled = true, startedAt?: number): string {
-  const [ds, setDs] = useState(0);
+  const [mountedAt] = useState(Date.now);
   const [, refresh] = useState(0);
-  const start = startedAt !== undefined && Number.isFinite(startedAt) ? startedAt : undefined;
 
   useEffect(() => {
     if (!enabled) return;
     const t = setInterval(() => {
-      if (start === undefined) setDs((d) => d + 1);
-      else refresh((tick) => tick + 1);
+      refresh((tick) => tick + 1);
     }, 100);
     return () => clearInterval(t);
-  }, [enabled, start]);
+  }, [enabled]);
 
-  const total =
-    start === undefined ? ds / 10 : Math.round(Math.max(0, Date.now() - start) / 100) / 10;
+  const start = startedAt !== undefined && Number.isFinite(startedAt) ? startedAt : mountedAt;
+  const total = Math.round(Math.max(0, Date.now() - start) / 100) / 10;
   if (total < 60) return `${total.toFixed(1)}s`;
   return `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`;
 }
-
-export type LoadingStateVariant = "Drive" | "Dots" | "Orbit";
-
 export interface LoadingStateProps extends ComponentProps<"div"> {
   /**
    * The status label. Defaults to "Churning".
@@ -162,8 +157,6 @@ export const LoadingState = forwardRef<HTMLDivElement, LoadingStateProps>(functi
   ref,
 ) {
   const liveElapsed = useElapsedTimer(elapsed, startedAt);
-  const pattern = LOADING_STATE_PATTERNS[variant] ?? LOADING_STATE_PATTERNS.Drive;
-
   const labelEl = showLabel ? (
     <span
       data-slot="loading-state-label"
@@ -175,7 +168,7 @@ export const LoadingState = forwardRef<HTMLDivElement, LoadingStateProps>(functi
         backgroundImage:
           "linear-gradient(90deg, var(--muted-foreground) 35%, var(--primary) 50%, var(--muted-foreground) 65%)",
         backgroundSize: "200% 100%",
-        animation: "shimmer-text 1.4s linear infinite",
+        animation: "rome-shimmer-text 1.4s linear infinite",
       }}
     >
       {label}
@@ -203,7 +196,7 @@ export const LoadingState = forwardRef<HTMLDivElement, LoadingStateProps>(functi
       className={cn("flex w-fit items-center gap-2", className)}
       {...rest}
     >
-      <LoaderGrid {...pattern} />
+      <LoaderGrid variant={variant} />
       {labelEl}
       {elapsedEl}
     </div>
