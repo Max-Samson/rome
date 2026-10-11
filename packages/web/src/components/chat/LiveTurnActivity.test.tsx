@@ -127,7 +127,6 @@ describe("activity indicator", () => {
     render(<LiveTurnActivity snapshot={null} hasText={false} />);
     const bubble = screen.getByRole("status");
     expect(bubble.classList.contains("rounded-16")).toBe(false);
-    expect(bubble.querySelectorAll(".rome-typing-dot")).toHaveLength(0);
     expect(bubble.querySelector("[data-variant=Orbit]")).toBeTruthy();
     expect(bubble.querySelectorAll("[data-slot=loader-grid-cell]")).toHaveLength(9);
     expect(bubble.querySelector("[data-slot=loading-state-label]")).toBeNull();

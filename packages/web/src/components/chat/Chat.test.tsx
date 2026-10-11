@@ -1016,7 +1016,9 @@ describe("Chat turn start wiring", () => {
     expect(listSessionTurns).toHaveBeenCalledWith("child-1");
     expect(startAt()).toBe(Date.parse(childStart));
   });
-  it("uses CreateTurnResponse time for sends and does not reset it for appended input", async () => {
+  it("anchors send time to local client clock and does not reset it for appended input", async () => {
+    const sendTime = 1_800_000_000_000;
+    const now = rs.spyOn(Date, "now").mockReturnValue(sendTime);
     rs.mocked(listSessionTurns).mockResolvedValue([]);
     rs.mocked(postSessionTurn)
       .mockResolvedValueOnce({
@@ -1037,14 +1039,18 @@ describe("Chat turn start wiring", () => {
     await waitFor(() => expect(listSessionTurns).toHaveBeenCalled());
     fireEvent.click(screen.getByTestId("send-button"));
     await waitFor(() => expect(turnId()).toBe("sent-turn"));
-    expect(startAt()).toBe(Date.parse(serverStart));
+    expect(startAt()).toBe(sendTime);
+    now.mockReturnValue(1_800_000_005_000);
     fireEvent.click(screen.getByTestId("send-button"));
     await waitFor(() => expect(postSessionTurn).toHaveBeenCalledTimes(2));
-    expect(startAt()).toBe(Date.parse(serverStart));
+    expect(startAt()).toBe(sendTime);
     expect(openTurnStream).toHaveBeenCalledTimes(1);
+    now.mockRestore();
   });
 
   it("discovers the next queued turn through the existing reattach loop with its own start", async () => {
+    const sendTime = 1_800_000_000_000;
+    const now = rs.spyOn(Date, "now").mockReturnValue(sendTime);
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     rs.mocked(listSessionTurns).mockResolvedValue([]);
     rs.mocked(openTurnStream).mockImplementationOnce(() =>
@@ -1081,7 +1087,7 @@ describe("Chat turn start wiring", () => {
     fireEvent.click(screen.getByTestId("send-button"));
     await waitFor(() => expect(postSessionTurn).toHaveBeenCalledTimes(2));
     expect(turnId()).toBe("first");
-    expect(startAt()).toBe(Date.parse(serverStart));
+    expect(startAt()).toBe(sendTime);
     const nextStart = "2026-06-13T00:00:10.000Z";
     rs.mocked(listSessionTurns).mockResolvedValue([
       { turnId: "next", status: "running", startedAt: nextStart },

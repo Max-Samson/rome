@@ -1113,7 +1113,12 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
         if (locallyStreamingSessionIdsRef.current.has(reattachSessionId)) return;
 
         const target = turns.find((t) => t.status === "running") ?? turns[0];
-        startSessionStream(reattachSessionId, target.turnId, Date.parse(target.startedAt));
+        const targetStart = target.startedAt ? Date.parse(target.startedAt) : NaN;
+        startSessionStream(
+          reattachSessionId,
+          target.turnId,
+          Number.isFinite(targetStart) ? Math.min(Date.now(), targetStart) : undefined,
+        );
         setStreamError(null);
         // Not cancelled with this effect: followTurn ends with its turn (or
         // on unmount), and the entry it holds keeps this poll from doubling up.
@@ -1163,6 +1168,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
       const wasLocallyStreaming = locallyStreamingSessionIdsRef.current.has(sendingSessionId);
       locallyStreamingSessionIdsRef.current.add(sendingSessionId);
       const sentAt = new Date().toISOString();
+      const sendClientTime = Date.now();
 
       const putUserMessage = (message: ChatMessage, replacesId?: string) => {
         const localIds =
@@ -1265,7 +1271,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
         setStreamReconnectRevision((revision) => revision + 1);
         return;
       }
-      const startedAt = Date.parse(createResp.startedAt);
+      const startedAt = sendClientTime;
       turnsForSession.set(pendingTurnId, startedAt);
       inflightTurnsRef.current.set(sendingSessionId, turnsForSession);
       startSessionStream(sendingSessionId, pendingTurnId, startedAt);

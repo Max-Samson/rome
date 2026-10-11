@@ -1,4 +1,4 @@
-import { LoadingState } from "@rome-os/ui/loading-state";
+import { LoaderGrid, useElapsedTimer } from "@rome-os/ui/loading-state";
 import { useTranslation } from "react-i18next";
 import type { TraceSnapshot } from "@rome/api-types/trace-segments";
 import { TranscriptEntry } from "@/components/chat/TranscriptEntry";
@@ -64,14 +64,7 @@ export function LiveTurnActivity({
       role="status"
       aria-label="Working"
     >
-      <LoadingState
-        variant="Orbit"
-        label={status}
-        showLabel={false}
-        startedAt={startedAt}
-        role="none"
-        className="contents [&>[data-slot=loading-state-elapsed]]:order-last"
-      />
+      <LoaderGrid variant="Orbit" />
       {step ? (
         <span
           key={step}
@@ -82,6 +75,7 @@ export function LiveTurnActivity({
       ) : (
         <span className="sr-only">{thinking}</span>
       )}
+      <Elapsed startedAt={startedAt} />
     </div>
   );
   if (!entranceKey) return typing;
@@ -89,5 +83,18 @@ export function LiveTurnActivity({
     <TranscriptEntry entryKey={entranceKey} live kind="bubble">
       {typing}
     </TranscriptEntry>
+  );
+}
+
+function Elapsed({ startedAt }: { startedAt?: number }) {
+  const elapsed = useElapsedTimer(true, startedAt);
+  return (
+    <span
+      aria-hidden="true"
+      data-slot="loading-state-elapsed"
+      className="shrink-0 whitespace-nowrap font-mono text-aux text-muted-foreground tabular-nums"
+    >
+      {elapsed}
+    </span>
   );
 }
