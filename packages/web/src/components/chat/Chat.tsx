@@ -356,9 +356,9 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
   const localOptimisticMessageIdsRef = useRef<Map<string, Set<string>>>(new Map());
   const locallyStreamingSessionIdsRef = useRef<Set<string>>(new Set());
   const turnStreamControllersRef = useRef<Map<string, AbortController>>(new Map());
-  // Per-session FIFO queue of in-flight turnIds; the session's
-  // streaming entry is only removed when this set drains.
-  const inflightTurnsRef = useRef<Map<string, Set<string>>>(new Map());
+  // Per-session FIFO queue of in-flight turnIds and their server start times;
+  // the session's streaming entry is only removed when this queue drains.
+  const inflightTurnsRef = useRef<Map<string, Map<string, number>>>(new Map());
 
   // Auto stick-to-bottom against the message scroller — a bounded
   // `overflow-y-auto` node, NOT the document. The chat shell is now
@@ -1113,7 +1113,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
         if (locallyStreamingSessionIdsRef.current.has(reattachSessionId)) return;
 
         const target = turns.find((t) => t.status === "running") ?? turns[0];
-        startSessionStream(reattachSessionId, target.turnId);
+        startSessionStream(reattachSessionId, target.turnId, Date.parse(target.startedAt));
         setStreamError(null);
         // Not cancelled with this effect: followTurn ends with its turn (or
         // on unmount), and the entry it holds keeps this poll from doubling up.
@@ -1240,7 +1240,8 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
 
       const createResp: CreateTurnResponse = result.data;
       const pendingTurnId = createResp.turnId;
-      const turnsForSession = inflightTurnsRef.current.get(sendingSessionId) ?? new Set<string>();
+      const turnsForSession =
+        inflightTurnsRef.current.get(sendingSessionId) ?? new Map<string, number>();
 
       const userMsg: ChatMessage = {
         id: createResp.inputId ?? immediateInputId ?? crypto.randomUUID(),
@@ -1264,9 +1265,10 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
         setStreamReconnectRevision((revision) => revision + 1);
         return;
       }
-      turnsForSession.add(pendingTurnId);
+      const startedAt = Date.parse(createResp.startedAt);
+      turnsForSession.set(pendingTurnId, startedAt);
       inflightTurnsRef.current.set(sendingSessionId, turnsForSession);
-      startSessionStream(sendingSessionId, pendingTurnId);
+      startSessionStream(sendingSessionId, pendingTurnId, startedAt);
 
       // The turn is already submitted, so a failed attach or a mid-stream drop
       // must never reject this function — that rejection is what used to
@@ -1282,10 +1284,10 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
           }
           const currentEntry = streamingSessionsRef.current.get(sendingSessionId);
           if (currentEntry?.turnId === pendingTurnId) {
-            const remaining = turns ? Array.from(turns) : [];
+            const remaining = turns ? Array.from(turns.keys()) : [];
             const next = remaining[0];
             if (next) {
-              startSessionStream(sendingSessionId, next);
+              startSessionStream(sendingSessionId, next, turns?.get(next));
             }
           }
           if (!turns || turns.size === 0) {
@@ -1839,6 +1841,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function ChatView(
                   blockIx: floorSessionStream?.assistantBlockIx,
                   sourceText: floorSessionStream?.assistantText,
                   textThroughOrdinal: floorSessionStream?.textThroughOrdinal,
+                  startedAt: floorSessionStream?.startedAt,
                   identity: floorIdentity,
                 }}
                 selection={

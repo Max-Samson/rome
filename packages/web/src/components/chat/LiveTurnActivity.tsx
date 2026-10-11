@@ -1,6 +1,6 @@
+import { LoadingState } from "@rome-os/ui/loading-state";
 import { useTranslation } from "react-i18next";
 import type { TraceSnapshot } from "@rome/api-types/trace-segments";
-import { ChatBubble } from "@/components/chat/ChatBubble";
 import { TranscriptEntry } from "@/components/chat/TranscriptEntry";
 import { getThinkingBlockPreview } from "@/components/chat/entries/ThinkingBlock";
 
@@ -9,12 +9,15 @@ export function LiveTurnActivity({
   textThroughOrdinal = -1,
   hasText,
   entranceKey,
+  startedAt,
 }: {
   snapshot: TraceSnapshot | null;
   textThroughOrdinal?: number;
   hasText: boolean;
   /** When set, the typing bubble pops in once for this key (see `useEntrance`). */
   entranceKey?: string;
+  /** The active turn's stable start, supplied by the chat stream metadata. */
+  startedAt?: number;
 }) {
   const { t } = useTranslation("activity");
   if (snapshot?.summary.turnStatus || snapshot?.summary.terminalError) return null;
@@ -51,23 +54,24 @@ export function LiveTurnActivity({
   if (!label && (hasText || snapshot?.summary.plan?.steps.length)) return null;
   const thinking = t("trace.summary.activity.thinking");
   const status = label ?? thinking;
-  // The rising dots alone say the agent is still running, so plain thinking
-  // shows nothing else; spelling it out would repeat the dots. A specific
-  // step, such as a thinking preview or the app in use, follows the dots on
-  // one line, and a long preview is cut to that line.
+  // The loader alone says the agent is running, so plain thinking stays
+  // screen-reader-only. Keep the keyed status span's original fade and
+  // truncation rather than the shared component's default shimmering label.
   const step = status === thinking ? null : status;
   const typing = (
-    <ChatBubble
-      tone="received"
-      className="flex h-10 items-center gap-2 py-0 md:max-w-md"
+    <div
+      className="flex h-6 items-center gap-2 pl-3 md:max-w-md text-aux text-muted-foreground"
       role="status"
       aria-label="Working"
     >
-      <span className="flex shrink-0 items-center gap-1" aria-hidden>
-        <span className="rome-typing-dot size-1.5 rounded-full bg-muted-foreground" />
-        <span className="rome-typing-dot size-1.5 rounded-full bg-muted-foreground" />
-        <span className="rome-typing-dot size-1.5 rounded-full bg-muted-foreground" />
-      </span>
+      <LoadingState
+        variant="Orbit"
+        label={status}
+        showLabel={false}
+        startedAt={startedAt}
+        role="none"
+        className="contents [&>[data-slot=loading-state-elapsed]]:order-last"
+      />
       {step ? (
         <span
           key={step}
@@ -78,7 +82,7 @@ export function LiveTurnActivity({
       ) : (
         <span className="sr-only">{thinking}</span>
       )}
-    </ChatBubble>
+    </div>
   );
   if (!entranceKey) return typing;
   return (
