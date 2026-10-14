@@ -77,8 +77,8 @@ import {
   findLastSubmission,
   hasPendingApprovalConfirmation,
 } from "@/components/chat/MessageList";
+import { DraftChatComposer } from "./DraftChatComposer";
 import {
-  ChatComposer,
   type ChatComposerHandle,
   type ChatComposerSendControls,
   type ChatComposerSnapshot,
@@ -1301,6 +1301,7 @@ export function Chat({
         throw new Error(result.message || `post turn failed (${result.status})`);
       }
 
+      if (!isMountedRef.current) return;
       const createResp: CreateTurnResponse = result.data;
       const pendingTurnId = createResp.turnId;
       const turnsForSession = inflightTurnsRef.current.get(sendingSessionId) ?? new Set<string>();
@@ -1397,6 +1398,7 @@ export function Chat({
         } finally {
           creatingSessionRef.current = false;
         }
+        controls.onSessionCreated?.(sendingSessionId);
         // The refs normally follow the render that adopts the session. The turn
         // below starts before that render, and its stream reads them to decide
         // which session's end counts as read and which may move the workspace.
@@ -1404,9 +1406,10 @@ export function Chat({
         floorSessionIdRef.current = sendingSessionId;
         setCreatedAgentMention(snapshot.agentMention ?? null);
         setCreatedSessionId(sendingSessionId);
-        onSessionCreated?.(sendingSessionId);
+        if (isMountedRef.current) onSessionCreated?.(sendingSessionId);
         notifySessionsChanged();
       }
+      if (controls.signal.aborted) throw new DOMException("Cancelled draft", "AbortError");
       const baseOptimisticText = buildOptimisticUserText(snapshot.text, snapshot.uploads);
       // Mirror the server's persisted form for a structured skill turn
       // (`/<name> task`) so the optimistic row matches what the reload shows.
@@ -2035,7 +2038,8 @@ export function Chat({
                       </Button>
                     </div>
                   ) : (
-                    <ChatComposer
+                    <DraftChatComposer
+                      sessionId={mainSessionId}
                       ref={composerRef}
                       // The box look lives on the composer now so the chip row can sit
                       // outside it; this mount adds the floating blur/translucency.

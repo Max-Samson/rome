@@ -101,6 +101,27 @@ function renderComposer(props: Partial<ChatComposerProps>, options: RenderCompos
   };
 }
 
+describe("composer imperative focus", () => {
+  it("preserves ordinary selection and optionally prepares the raw end without focusing", () => {
+    const composerRef = createRef<ChatComposerHandle>();
+    renderComposer({}, { composerRef });
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    const raw = "  中文🙂\n第二行\n  ";
+    fireEvent.change(textarea, { target: { value: raw } });
+    textarea.setSelectionRange(2, 4);
+    act(() => composerRef.current!.focus());
+    expect(document.activeElement).toBe(textarea);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([2, 4]);
+
+    const send = screen.getByRole("button", { name: "Send" });
+    send.focus();
+    act(() => composerRef.current!.focus({ caret: "end", focus: false }));
+    expect(document.activeElement).toBe(send);
+    expect(textarea.value).toBe(raw);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([raw.length, raw.length]);
+  });
+});
+
 // The people the composer offers to speak as. The listing is the curated
 // people read (`GET /api/people`); the guardian is dropped because speaking as
 // the guardian is what the composer already does by default.
