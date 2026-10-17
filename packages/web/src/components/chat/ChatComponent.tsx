@@ -8,11 +8,9 @@ import type {
   ResolvedRomeNewsItem,
   RomeNewsDefinition,
 } from "@rome-os/rome-web-components/news-item/schema";
-import { useNewChatDraftController } from "./NewChatDraftProvider";
 import type { ChatComposerHandle } from "@/components/chat/ChatComposer";
 import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
 import { emitSessionsChanged, usePinSession, useSessionsChanged } from "@/lib/session-events";
-import { randomUUID } from "@/lib/random-uuid";
 import { listSessions } from "@/lib/chat-api";
 import { useSettings } from "@/hooks/use-settings";
 import { useCoarsePointer } from "@/hooks/use-coarse-pointer";
@@ -62,7 +60,6 @@ export function ChatComponent({
   const location = useLocation();
   const locationRef = useRef(location.key);
   locationRef.current = location.key;
-  const draftController = useNewChatDraftController();
 
   const { data: settings } = useSettings();
   const coarsePointer = useCoarsePointer();
@@ -84,7 +81,7 @@ export function ChatComponent({
   const [previousLocationKey, setPreviousLocationKey] = useState(location.key);
   if (previousLocationKey !== location.key) {
     setPreviousLocationKey(location.key);
-    if (!sessionId && !previousSessionId && draftController?.isSubmitting()) {
+    if (!sessionId && !previousSessionId) {
       setDraftKey((key) => key + 1);
       setCreatedSessionId(null);
     }
@@ -109,44 +106,16 @@ export function ChatComponent({
   );
 
   const composerRef = useRef<ChatComposerHandle>(null);
-  const appliedSeedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (
-      sessionId ||
-      !(
-        initialDraftText !== undefined ||
-        initialSkillName ||
-        initialProjectName ||
-        initialAgentMention
-      )
-    )
-      return;
-    const seed = {
+  const draftSeed = useMemo(
+    () => ({
+      intent: location.key,
       ...(initialDraftText !== undefined ? { text: initialDraftText } : {}),
       ...(initialProjectName ? { projectPath: initialProjectName } : {}),
       ...(initialAgentMention ? { agentMention: initialAgentMention } : {}),
       ...(initialSkillName ? { skill: { name: initialSkillName } } : {}),
-    };
-    if (draftController) draftController.prefill(location.key, seed);
-    else {
-      const seedKey = JSON.stringify(seed);
-      if (appliedSeedRef.current === seedKey) return;
-      appliedSeedRef.current = seedKey;
-      if (initialDraftText !== undefined)
-        composerRef.current?.insertText(initialDraftText, { focus: !coarsePointer });
-      if (initialSkillName) composerRef.current?.setSkillSelection({ name: initialSkillName });
-    }
-  }, [
-    draftController,
-    location.key,
-    initialDraftText,
-    initialSkillName,
-    initialProjectName,
-    initialAgentMention,
-    sessionId,
-    coarsePointer,
-  ]);
-
+    }),
+    [location.key, initialDraftText, initialProjectName, initialAgentMention, initialSkillName],
+  );
   // Run after prefill, and only on route entry, not on draft/metadata edits.
   useEffect(() => {
     if (!sessionId) composerRef.current?.focus({ caret: "end", focus: !coarsePointer });
@@ -268,24 +237,12 @@ export function ChatComponent({
       switch (entry.type) {
         case "chat": {
           if (entry.mode === "start") {
-            if (!draftController)
-              composerRef.current?.setSkillSelection(
-                entry.skillName ? { name: entry.skillName } : null,
-              );
-            // Send immediately, carrying the composer's current selections.
             composerRef.current?.submit(entry.prompt, { skillName: entry.skillName });
           } else {
-            if (draftController)
-              draftController.prefill(randomUUID(), {
-                text: entry.prompt,
-                skill: entry.skillName ? { name: entry.skillName } : null,
-              });
-            else {
-              composerRef.current?.setSkillSelection(
-                entry.skillName ? { name: entry.skillName } : null,
-              );
-              composerRef.current?.insertText(entry.prompt);
-            }
+            composerRef.current?.setSkillSelection(
+              entry.skillName ? { name: entry.skillName } : null,
+            );
+            composerRef.current?.insertText(entry.prompt);
           }
           return;
         }
@@ -301,7 +258,7 @@ export function ChatComponent({
           return;
       }
     },
-    [navigate, draftController],
+    [navigate],
   );
 
   return (
@@ -314,8 +271,9 @@ export function ChatComponent({
         onSessionNotFound={handleSessionNotFound}
         onSessionMessage={onSessionMessage}
         onSessionCreated={handleSessionCreated}
-        initialProjectName={draftController ? undefined : initialProjectName}
-        initialAgentMention={draftController ? undefined : initialAgentMention}
+        draftSeed={draftSeed}
+        initialProjectName={initialProjectName}
+        initialAgentMention={initialAgentMention}
         composerRef={composerRef}
         centerDraftComposer={greetingOnlyHome}
         emptyState={

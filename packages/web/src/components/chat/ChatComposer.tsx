@@ -55,7 +55,8 @@ import { SkillCommandChip, type SkillSelection } from "./composer/SkillCommandCh
 import { SlashSkillMenu, type SlashSkillMenuHandle } from "./composer/SlashSkillMenu";
 import { WorkspaceContextChips } from "./composer/WorkspaceContextChips";
 import { useHorizontalScrollRail } from "./HorizontalScrollRail";
-import type { NewChatDraftBinding, NewChatDraftValue } from "./NewChatDraftProvider";
+import { useNewChatDraft, type NewChatSeed } from "@/hooks/use-new-chat-draft";
+import type { NewChatDraftData } from "@/lib/new-chat-draft-storage";
 import { randomUUID } from "@/lib/random-uuid";
 
 export interface ChatComposerSnapshot {
@@ -87,8 +88,6 @@ export interface ChatComposerSendControls {
    * to run while the composer pretends it was cancelled.
    */
   signal: AbortSignal;
-  /** Transfers a pending first input before the host adopts its new session. */
-  onSessionCreated?: (sessionId: string) => void;
 }
 
 export interface ChatComposerHandle {
@@ -117,12 +116,8 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
-  controlledDraft?: {
-    binding: NewChatDraftBinding;
-    value: NewChatDraftValue;
-    accepted: boolean;
-    pending?: { snapshot: ChatComposerSnapshot };
-  };
+  persistNewChatDraft?: boolean;
+  draftSeed?: NewChatSeed;
   // Whether the project picker is shown (typically only in draft mode).
   showProjectSelector?: boolean;
   // Whether the large-model picker is shown (typically only in draft mode).
@@ -193,33 +188,10 @@ function clampTextareaHeight(el: HTMLTextAreaElement, maxHeight: number) {
   el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
-function useComposerField<K extends keyof NewChatDraftValue>(
-  control: ChatComposerProps["controlledDraft"],
-  key: K,
-  initial: NewChatDraftValue[K],
-): [NewChatDraftValue[K], (action: SetStateAction<NewChatDraftValue[K]>) => void] {
-  const [local, setLocal] = useState(initial);
-  const controlled = control && !control.accepted;
-  const [wasControlled, setWasControlled] = useState(Boolean(controlled));
-  if (wasControlled && !controlled) {
-    // Ownership passes once to the ordinary session composer at input acceptance.
-    setWasControlled(false);
-    setLocal(control?.value[key] ?? initial);
-  }
-  const binding = controlled ? control.binding : undefined;
-  const change = useCallback(
-    (action: SetStateAction<NewChatDraftValue[K]>) => {
-      if (binding) binding.change(key, action);
-      else setLocal(action);
-    },
-    [binding, key],
-  );
-  return [controlled ? control.value[key] : local, change];
-}
-
 export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(function ChatComposer(
   {
-    controlledDraft: draftControl,
+    persistNewChatDraft = false,
+    draftSeed,
     showProjectSelector = false,
     showModelSelector = false,
     initialProjectName,
@@ -236,24 +208,25 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   ref,
 ) {
   const { t } = useTranslation("chat");
-  const controlledDraft = draftControl?.accepted ? undefined : draftControl;
 
-  const [inputText, setInputText] = useComposerField(draftControl, "text", "");
-  const [pendingUploads, setPendingUploads] = useComposerField(draftControl, "uploads", []);
-  const [localUploadInFlight, setUploadInFlight] = useState(false);
-  const uploadInFlight = controlledDraft
-    ? Boolean(controlledDraft.pending?.snapshot.uploads.length)
-    : localUploadInFlight;
-  const draftPending = Boolean(controlledDraft?.pending);
+  const draft = useNewChatDraft(persistNewChatDraft, draftSeed, {
+    projectPath: initialProjectName?.trim() || DEFAULT_PROJECT_NAME,
+    agentMention: initialAgentMention,
+  });
+  const field =
+    <K extends keyof NewChatDraftData>(key: K) =>
+    (action: SetStateAction<NewChatDraftData[K]>) =>
+      draft.change(key, action);
+  const inputText = draft.value.text;
+  const setInputText = field("text");
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  const [uploadInFlight, setUploadInFlight] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   // When `pinnedAgentMention` is set, the session is already bound to an
   // agent — the `@` menu and the local draftAgentMention are inert.
-  const [draftAgentMention, setDraftAgentMention] = useComposerField(
-    draftControl,
-    "agentMention",
-    initialAgentMention,
-  );
+  const draftAgentMention = draft.value.agentMention;
+  const setDraftAgentMention = field("agentMention");
   const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
   // Index of the `@` that opened the menu. Used to splice the query out of
   // the textarea once the user picks an item.
@@ -266,7 +239,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const agentMentionLocked = pinnedAgentMention !== null || lockAgentMention;
   useEffect(() => {
     if (agentMentionLocked) {
-      if (!controlledDraft) setDraftAgentMention(null);
+      if (!sendInFlightRef.current) setDraftAgentMention(null);
       setMentionMenuOpen(false);
       setMentionAnchorIndex(null);
       setMentionQuery("");
@@ -280,7 +253,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   // name-shape constraint applies. Expansion stays server-side.
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
-  const [draftSkill, setDraftSkill] = useComposerField(draftControl, "skill", null);
+  const draftSkill = draft.value.skill;
+  const setDraftSkill = field("skill");
 
   const { data: settings } = useSettings();
   const { data: peopleData } = usePeople();
@@ -309,17 +283,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     }
     seededFromSettingsRef.current = true;
   }, [settings]);
-  const [selectedPersonId, setSelectedPersonId] = useComposerField(draftControl, "personaId", "");
+  const selectedPersonId = draft.value.personaId;
+  const setSelectedPersonId = field("personaId");
 
   const [impersonationMenuOpen, setImpersonationMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
 
-  const [draftProjectName, setDraftProjectName] = useComposerField(
-    draftControl,
-    "projectPath",
-    initialProjectName?.trim() || DEFAULT_PROJECT_NAME,
-  );
+  const draftProjectName = draft.value.projectPath;
+  const setDraftProjectName = field("projectPath");
   const [projectCatalog, setProjectCatalog] = useState<ProjectCatalog | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -338,8 +310,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const [pendingConnectPath, setPendingConnectPath] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mountedRef = useRef(true);
+  const sendInFlightRef = useRef(false);
   const pendingEndSelectionRef = useRef<{
-    value: string;
+    value: string | null;
     activeElement: Element | null;
   } | null>(null);
   const attachmentTrayRef = useRef<HTMLDivElement>(null);
@@ -363,11 +337,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   // State drives the UI, while the ref closes the same-event gap before React
   // commits that state (for example, two rapid Enter keydown events).
   const uploadInFlightRef = useRef(false);
-  if (controlledDraft) uploadInFlightRef.current = uploadInFlight;
   // Live for exactly one upload; `cancelUpload` aborts through it.
   const uploadAbortRef = useRef<AbortController | null>(null);
-  const controlledDraftRef = useRef(Boolean(controlledDraft));
-  controlledDraftRef.current = Boolean(controlledDraft);
   // The last failed send, kept until a send succeeds.
   const failedSendRef = useRef<{
     inputId: string;
@@ -388,17 +359,18 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     clampTextareaHeight(el, textareaMaxHeight);
   }, [inputText, textareaMaxHeight]);
 
-  // Entry may seed the controlled draft before React renders its value. Position
-  // once after that commit, without refocusing or overriding intervening input.
   useLayoutEffect(() => {
     const pending = pendingEndSelectionRef.current;
-    if (!pending) return;
+    if (!pending || !draft.ready) return;
     pendingEndSelectionRef.current = null;
     const el = textareaRef.current;
-    if (el && el.value === pending.value && document.activeElement === pending.activeElement) {
+    if (
+      el &&
+      (pending.value === null || el.value === pending.value) &&
+      document.activeElement === pending.activeElement
+    )
       el.setSelectionRange(el.value.length, el.value.length);
-    }
-  }, [inputText]);
+  }, [inputText, draft.ready]);
 
   // Whether the textarea held focus when the current Send press began.
   const textareaFocusedAtPressRef = useRef(false);
@@ -408,7 +380,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   //      project the user explicitly picked from the menu.
   const initialProjectNameRef = useRef(initialProjectName);
   useEffect(() => {
-    if (controlledDraft) return;
     const next = initialProjectName?.trim() || DEFAULT_PROJECT_NAME;
     if (next === draftProjectName) {
       initialProjectNameRef.current = initialProjectName;
@@ -423,10 +394,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   // If impersonation gets disabled mid-session, drop any selection so the
   // composer doesn't carry a hidden persona id.
   useEffect(() => {
-    if (impersonationEnabled || (controlledDraft && !settings)) return;
+    if (!settings || impersonationEnabled) return;
     setSelectedPersonId("");
     setImpersonationMenuOpen(false);
-  }, [impersonationEnabled]);
+  }, [settings, impersonationEnabled, selectedPersonId]);
 
   const updateLargeModelSelection = useCallback(
     async (next: string) => {
@@ -502,35 +473,19 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     }
   }, [newProjectName, t, connectOnCreate]);
 
-  const addPendingFiles = useCallback(
-    (files: File[]) => {
-      // The visible file picker is disabled during an upload, but paste and the
-      // parent drop zones enter through this callback directly. Guard the shared
-      // boundary so a file cannot be added to the tray without belonging to the
-      // multipart request whose progress it displays.
-      if (files.length === 0 || uploadInFlightRef.current) return;
-      setPendingUploads((prev) => [...prev, ...files.map((file) => ({ id: randomUUID(), file }))]);
-    },
-    [setPendingUploads],
-  );
+  const addPendingFiles = useCallback((files: File[]) => {
+    // The visible file picker is disabled during an upload, but paste and the
+    // parent drop zones enter through this callback directly. Guard the shared
+    // boundary so a file cannot be added to the tray without belonging to the
+    // multipart request whose progress it displays.
+    if (files.length === 0 || uploadInFlightRef.current) return;
+    setPendingUploads((prev) => [...prev, ...files.map((file) => ({ id: randomUUID(), file }))]);
+  }, []);
 
   const invokeOnSend = useCallback(
-    async (snapshot: ChatComposerSnapshot, independent = false) => {
-      if (controlledDraft) {
-        if (snapshot.uploads.length) setUploadProgress(0);
-        try {
-          return await controlledDraft.binding.send(
-            snapshot,
-            onSend,
-            (progress) => {
-              setUploadProgress(progress === null ? null : Math.max(0, Math.min(1, progress)));
-            },
-            independent,
-          );
-        } finally {
-          setUploadProgress(null);
-        }
-      }
+    async (snapshot: ChatComposerSnapshot) => {
+      if (sendInFlightRef.current) return;
+      sendInFlightRef.current = true;
       const tracksUpload = snapshot.uploads.length > 0;
       const controller = new AbortController();
       if (tracksUpload) {
@@ -542,36 +497,37 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       try {
         await onSend(snapshot, {
           onUploadProgress: (progress) => {
-            if (!tracksUpload) return;
+            if (!tracksUpload || !mountedRef.current) return;
             setUploadProgress(progress === null ? null : Math.max(0, Math.min(1, progress)));
           },
           signal: controller.signal,
         });
       } finally {
+        sendInFlightRef.current = false;
         if (tracksUpload) {
           uploadInFlightRef.current = false;
           uploadAbortRef.current = null;
-          setUploadInFlight(false);
-          setUploadProgress(null);
+          if (mountedRef.current) {
+            setUploadInFlight(false);
+            setUploadProgress(null);
+          }
         }
       }
     },
-    [onSend, controlledDraft],
+    [onSend],
   );
 
-  // Ordinary session uploads stop with their composer. The provider owns a
-  // pending first send across route changes.
-  useEffect(
-    () => () => {
-      if (!controlledDraftRef.current) uploadAbortRef.current?.abort();
-    },
-    [],
-  );
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      uploadAbortRef.current?.abort();
+    };
+  }, []);
 
   const cancelUpload = useCallback(() => {
-    if (controlledDraft) controlledDraft.binding.cancel();
-    else uploadAbortRef.current?.abort();
-  }, [controlledDraft]);
+    uploadAbortRef.current?.abort();
+  }, []);
 
   useImperativeHandle(
     ref,
@@ -582,20 +538,21 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         if (!el) return;
         if (options?.focus !== false) el.focus();
         if (options?.caret !== "end") return;
-        const value = controlledDraft?.binding.current().value.text ?? el.value;
-        if (el.value === value) el.setSelectionRange(el.value.length, el.value.length);
+        const value = draft.ready ? draft.current.current.text : null;
+        if (value !== null && el.value === value)
+          el.setSelectionRange(el.value.length, el.value.length);
         else pendingEndSelectionRef.current = { value, activeElement: document.activeElement };
       },
       insertText: (text: string, options?: { focus?: boolean }) => {
         if (uploadInFlightRef.current) return;
         setInputText(text);
-        requestAnimationFrame(() => {
-          const el = textareaRef.current;
-          if (!el) return;
-          clampTextareaHeight(el, textareaMaxHeight);
+        const el = textareaRef.current;
+        if (el) {
           if (options?.focus !== false) el.focus();
-          el.setSelectionRange(text.length, text.length);
-        });
+          if (el.value === text) el.setSelectionRange(text.length, text.length);
+          else
+            pendingEndSelectionRef.current = { value: text, activeElement: document.activeElement };
+        }
       },
       setSkillSelection: (skill: SkillSelection | null) => {
         if (uploadInFlightRef.current) return;
@@ -605,29 +562,24 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       },
       addFiles: addPendingFiles,
       submit: (text: string, opts?: { skillName?: string }) => {
-        if (uploadInFlightRef.current) return;
+        if (sendInFlightRef.current || uploadInFlightRef.current) return;
         const trimmed = text.trim();
-        if (controlledDraft?.binding.current().pending) return;
-        const currentDraft = controlledDraft?.binding.current().value;
-        const uploads = controlledDraft ? [] : pendingUploads;
-        const skillName = controlledDraft ? opts?.skillName : (opts?.skillName ?? draftSkill?.name);
-        if (!trimmed && uploads.length === 0 && !skillName) return;
+        const skillName = opts?.skillName ?? (persistNewChatDraft ? undefined : draftSkill?.name);
+        if (!trimmed && (persistNewChatDraft || pendingUploads.length === 0) && !skillName) return;
         const snapshot: ChatComposerSnapshot = {
           text: trimmed,
-          uploads,
-          personaId: impersonationEnabled
-            ? (currentDraft?.personaId ?? selectedPersonId) || undefined
-            : undefined,
+          uploads: persistNewChatDraft ? [] : pendingUploads,
+          personaId: impersonationEnabled && selectedPersonId ? selectedPersonId : undefined,
           largeModelSelection:
             showModelSelector && modelSelectorEnabled ? largeModelSelection : undefined,
           reasoningEffort,
-          projectPath: currentDraft?.projectPath ?? draftProjectName,
-          agentMention: (currentDraft ? currentDraft.agentMention : draftAgentMention) ?? undefined,
+          projectPath: draftProjectName,
+          agentMention: draftAgentMention ?? undefined,
           skillName,
         };
-        void invokeOnSend(snapshot, Boolean(controlledDraft))
+        void invokeOnSend(snapshot)
           .then(() => {
-            if (controlledDraft) return;
+            if (!mountedRef.current) return;
             const sentIds = new Set(snapshot.uploads.map((upload) => upload.id));
             setPendingUploads((current) => current.filter((upload) => !sentIds.has(upload.id)));
           })
@@ -642,6 +594,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       }),
     }),
     [
+      draft.ready,
+      persistNewChatDraft,
       addPendingFiles,
       textareaMaxHeight,
       impersonationEnabled,
@@ -659,13 +613,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     ],
   );
 
-  const removePendingUpload = useCallback(
-    (id: string) => {
-      if (uploadInFlightRef.current) return;
-      setPendingUploads((prev) => prev.filter((upload) => upload.id !== id));
-    },
-    [setPendingUploads],
-  );
+  const removePendingUpload = useCallback((id: string) => {
+    if (uploadInFlightRef.current) return;
+    setPendingUploads((prev) => prev.filter((upload) => upload.id !== id));
+  }, []);
 
   const handleFileSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
     addPendingFiles(Array.from(event.target.files ?? []));
@@ -684,14 +635,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   );
 
   const runSend = useCallback(async () => {
-    if (uploadInFlight || uploadInFlightRef.current) return;
-    const currentDraft = controlledDraft?.binding.current().value;
-    const rawText = currentDraft?.text ?? inputText;
-    const uploads = currentDraft?.uploads ?? pendingUploads;
-    const skill = currentDraft ? currentDraft.skill : draftSkill;
-    // A skill chip alone is a sendable turn.
-    if (!rawText.trim() && uploads.length === 0 && !skill) return;
-    const text = rawText.trim();
+    if (sendInFlightRef.current || uploadInFlight || uploadInFlightRef.current) return;
+    // A skill chip alone is a sendable turn — the server-expanded prompt asks
+    // the agent to read the skill and ask what to do with it.
+    if (!inputText.trim() && pendingUploads.length === 0 && !draftSkill) return;
+
+    const text = inputText.trim();
+    const uploads = pendingUploads;
+    const skill = draftSkill;
     const failed = failedSendRef.current;
     const inputId =
       failed && failed.text === text && failed.uploads === uploads && failed.skill === skill
@@ -700,31 +651,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     const snapshot: ChatComposerSnapshot = {
       text,
       uploads,
-      personaId: impersonationEnabled
-        ? (currentDraft?.personaId ?? selectedPersonId) || undefined
-        : undefined,
+      personaId: impersonationEnabled && selectedPersonId ? selectedPersonId : undefined,
       largeModelSelection:
         showModelSelector && modelSelectorEnabled ? largeModelSelection : undefined,
       reasoningEffort,
-      projectPath: currentDraft?.projectPath ?? draftProjectName,
+      projectPath: draftProjectName,
       // Pinned sessions ignore this; draft hosts read it to lock the new
       // session to the picked agent.
-      agentMention: (currentDraft ? currentDraft.agentMention : draftAgentMention) ?? undefined,
+      agentMention: draftAgentMention ?? undefined,
       skillName: skill?.name,
       inputId,
     };
-
-    if (controlledDraft) {
-      if (controlledDraft.binding.current().pending) return;
-      snapshot.inputId = controlledDraft.binding.inputId(snapshot);
-      if (textareaRef.current && text) recordSendOrigin(snapshot.inputId, textareaRef.current);
-      try {
-        await invokeOnSend(snapshot);
-      } catch {
-        discardSendOrigin(snapshot.inputId);
-      }
-      return;
-    }
 
     // A text-only turn clears optimistically — it is accepted or rejected in
     // one round trip, so the input wipes immediately and is restored on
@@ -734,35 +671,23 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     // It clears only once the server has accepted the turn.
     const clearsOptimistically = uploads.length === 0;
     if (textareaRef.current && text) recordSendOrigin(inputId, textareaRef.current);
-    if (clearsOptimistically) {
-      setInputText("");
-      setPendingUploads([]);
-      setDraftSkill(null);
-    }
+    const submission = draft.beginSend(clearsOptimistically);
+    if (clearsOptimistically) setPendingUploads([]);
     try {
       await invokeOnSend(snapshot);
       failedSendRef.current = null;
-      if (!clearsOptimistically) {
+      submission.accept();
+      if (mountedRef.current && !clearsOptimistically) {
         const sentIds = new Set(uploads.map((upload) => upload.id));
         setPendingUploads((current) => current.filter((upload) => !sentIds.has(upload.id)));
-        setDraftSkill((current) => (current === skill ? null : current));
-        // Anything typed during the upload is newer than what was sent, so it
-        // survives; only the exact text that went out is cleared.
-        setInputText((current) => (current === rawText ? "" : current));
       }
     } catch {
       discardSendOrigin(inputId);
       failedSendRef.current = { inputId, text, uploads, skill };
-      if (clearsOptimistically) {
-        setInputText(text);
-        setPendingUploads(uploads);
-        setDraftSkill(skill);
-      }
-      // Nothing to restore otherwise — a cancelled or failed upload never
-      // cleared the text or the attachment tray in the first place.
+      if (submission.fail() && mountedRef.current && clearsOptimistically)
+        setPendingUploads((current) => (current.length ? current : uploads));
     }
   }, [
-    controlledDraft,
     inputText,
     pendingUploads,
     draftSkill,
@@ -1363,7 +1288,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
                   void runSend();
                 }}
                 disabled={
-                  draftPending ||
                   uploadInFlight ||
                   (!inputText.trim() && pendingUploads.length === 0 && !draftSkill)
                 }

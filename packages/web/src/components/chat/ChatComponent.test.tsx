@@ -5,7 +5,13 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { MemoryRouter, useLocation, useNavigationType, useNavigate } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, rs } from "@rstest/core";
-import { NewChatDraftProvider } from "./NewChatDraftProvider";
+import { DASHBOARD_IDENTITY_QUERY_KEY } from "@/hooks/use-dashboard-identity";
+import {
+  readNewChatDraft,
+  activateDraftOwner,
+  writeNewChatDraft,
+  emptyNewChatDraft,
+} from "@/lib/new-chat-draft-storage";
 import { useHostNavigation } from "@/hooks/use-host-navigation";
 import { romeNewsConfig } from "@/config/quick-entries";
 import i18n from "@/i18n";
@@ -97,6 +103,7 @@ afterEach(async () => {
   chatStub.enabled = false;
   romeNewsConfig.enabled = false;
   localStorage.clear();
+  sessionStorage.clear();
   rs.restoreAllMocks();
   rs.unstubAllGlobals();
   await i18n.changeLanguage("en");
@@ -168,11 +175,17 @@ function renderChatComponent(
     },
   });
 
+  queryClient.setQueryData(DASHBOARD_IDENTITY_QUERY_KEY, {
+    kind: "guardian",
+    userId: "synthetic-guardian",
+  });
   const fetchSpy = rs.spyOn(globalThis, "fetch").mockImplementation((async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ) => {
     const url = String(input);
+    if (url === "/api/auth/me")
+      return Response.json({ kind: "guardian", userId: "synthetic-guardian" });
     if (url === "/api/settings") {
       return Response.json({ guardianName: "Ada", agentName: "Atlas", ...homeData?.settings });
     }
@@ -223,9 +236,7 @@ function renderChatComponent(
       <QueryClientProvider client={queryClient}>
         {routed ? (
           <StrictMode>
-            <NewChatDraftProvider>
-              <RoutedChatHost {...props} />
-            </NewChatDraftProvider>
+            <RoutedChatHost {...props} />
           </StrictMode>
         ) : (
           <ChatHost {...props} />
@@ -607,6 +618,7 @@ describe("ChatComponent empty home", () => {
       },
     );
 
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "existing user draft" } });
     await user.click(await screen.findByRole("button", { name: "Cloud chat" }));
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Draft from Cloud");
 
@@ -622,6 +634,47 @@ describe("ChatComponent empty home", () => {
 });
 
 describe("ChatComponent first send", () => {
+  it("independent start quick-entry does not save its prompt over an unrelated draft", async () => {
+    romeNewsConfig.enabled = true;
+    const { fetchSpy } = renderChatComponent(
+      {},
+      {
+        sessions: [],
+        projects: [],
+        newsFeed: {
+          version: 1,
+          items: [
+            {
+              id: "synthetic-start",
+              type: "chat",
+              title: { en: "Start independently", "zh-CN": "独立开始" },
+              image: "https://example.com/synthetic.png",
+              prompt: { en: "independent prompt", "zh-CN": "独立提示" },
+              mode: "start",
+              skillName: "independent_skill",
+            },
+          ],
+        },
+      },
+    );
+    const raw = "  unrelated raw中文🙂\n  ";
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: raw } });
+    await userEvent.click(await screen.findByRole("button", { name: "Start independently" }));
+    await waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(
+          ([url, init]) => String(url).endsWith("/turns") && init?.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    expect(readNewChatDraft("guardian:synthetic-guardian")?.value.text).toBe(raw);
+    const posted = fetchSpy.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/turns") && init?.method === "POST",
+    )!;
+    expect((posted[1]?.body as FormData).get("text")).toBe("independent prompt");
+    expect((posted[1]?.body as FormData).get("skillName")).toBe("independent_skill");
+  });
+
   it("keeps the focused composer through the session the first send creates", async () => {
     const user = userEvent.setup();
     const onSessionCreated = rs.fn();
@@ -702,6 +755,70 @@ function deferredResponse() {
 }
 
 describe("retained draft through the real Chat route and first-send path", () => {
+  it("unmounted failed create restores only an unedited remount, without late navigation", async () => {
+    const creation = deferredResponse();
+    const created = rs.fn();
+    renderChatComponent(
+      { onSessionCreated: created },
+      { sessions: [], projects: [], createSession: () => creation.promise },
+      "/chat",
+      true,
+    );
+    const raw = "  failed create中文🙂\n  ";
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: raw } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Other route" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat route" }));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+    await act(async () =>
+      creation.resolve(Response.json({ error: "synthetic failure" }, { status: 500 })),
+    );
+    await waitFor(() =>
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(raw),
+    );
+    expect(created).not.toHaveBeenCalled();
+    expect(screen.getByTestId("chat-location").textContent).toContain("/chat ");
+  });
+
+  it("new remount typing then deletion survives old POST rejection", async () => {
+    const post = deferredResponse();
+    renderChatComponent(
+      {},
+      { sessions: [], projects: [], postTurn: () => post.promise },
+      "/chat",
+      true,
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "old A" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-location").textContent).toContain("/chat/new-session"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Other route" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat route" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "new B" } });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+    await act(async () => post.resolve(Response.json({ error: "rejected" }, { status: 500 })));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+    expect(readNewChatDraft("guardian:synthetic-guardian")?.value.text).toBe("");
+  });
+
+  it("public identity switch clears old content without refocusing a coarse pointer", async () => {
+    stubCoarsePointer();
+    activateDraftOwner("guardian:late");
+    const raw = "  later identity中文🙂\n  ";
+    writeNewChatDraft("guardian:late", { ...emptyNewChatDraft(), text: raw });
+    const { queryClient } = renderChatComponent({}, undefined, "/chat", true);
+    // Query identity changes are synthetic; there is no real account operation.
+    act(() =>
+      queryClient.setQueryData(DASHBOARD_IDENTITY_QUERY_KEY, { kind: "guardian", userId: "late" }),
+    );
+    // A confirmed identity switch intentionally clears old content, unlike first hydration.
+    await waitFor(() =>
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(""),
+    );
+    expect(document.activeElement).not.toBe(screen.getByRole("textbox"));
+  });
+
   it.each([
     "Existing session",
     "Other route",
@@ -808,124 +925,6 @@ describe("retained draft through the real Chat route and first-send path", () =>
     await waitFor(() => expect(textarea.value).toBe(""));
     fireEvent.click(screen.getByRole("button", { name: "New chat route" }));
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
-  });
-
-  it.each([
-    200, 500,
-  ])("late create/POST (%s) cannot redirect or erase newer New chat edits", async (status) => {
-    const creation = deferredResponse();
-    const post = deferredResponse();
-    const created = rs.fn();
-    const { fetchSpy } = renderChatComponent(
-      { onSessionCreated: created },
-      {
-        sessions: [],
-        projects: [],
-        createSession: () => creation.promise,
-        postTurn: () => post.promise,
-      },
-      "/chat",
-      true,
-    );
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "old submission" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    fireEvent.click(screen.getByRole("button", { name: "Other route" }));
-    fireEvent.click(screen.getByRole("button", { name: "New chat route" }));
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "new draft after remount" } });
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-    expect(
-      fetchSpy.mock.calls.filter(
-        ([url, init]) => String(url) === "/api/chat/sessions" && init?.method === "POST",
-      ),
-    ).toHaveLength(1);
-    await act(async () => creation.resolve(Response.json({ id: "late-session" })));
-    expect(created).not.toHaveBeenCalled();
-    expect(screen.getByTestId("chat-location").textContent).toContain("/chat ");
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
-      "new draft after remount",
-    );
-    await act(async () =>
-      post.resolve(
-        Response.json(status === 200 ? { turnId: null } : { error: "Synthetic failure" }, {
-          status,
-        }),
-      ),
-    );
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
-      "new draft after remount",
-    );
-    expect(
-      fetchSpy.mock.calls.filter(
-        ([url, init]) => String(url).endsWith("/late-session/turns") && init?.method === "POST",
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("restores a failed first POST on the created session after remount and retries its inputId", async () => {
-    const post = deferredResponse();
-    let calls = 0;
-    const { fetchSpy } = renderChatComponent(
-      {},
-      {
-        sessions: [],
-        projects: [],
-        settings: { enableModelSelector: true, webchatLargeModel: "claude-sonnet" },
-        postTurn: () => (++calls === 1 ? post.promise : Response.json({ turnId: null })),
-      },
-      "/chat",
-      true,
-    );
-    const raw = "  first\n中文  ";
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: raw } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("chat-location").textContent).toContain("/chat/new-session"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Other route" }));
-    fireEvent.click(screen.getByRole("button", { name: "New chat route" }));
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
-    await act(async () =>
-      post.resolve(Response.json({ error: "Synthetic failure" }, { status: 500 })),
-    );
-    await act(async () =>
-      window.dispatchEvent(
-        new CustomEvent("rome:host-navigate", { detail: { path: "/chat/new-session" } }),
-      ),
-    );
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(raw);
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(calls).toBe(2));
-    const posts = fetchSpy.mock.calls.filter(
-      ([url, init]) => String(url).endsWith("/new-session/turns") && init?.method === "POST",
-    );
-    expect((posts[0][1]?.body as FormData).get("inputId")).toBe(
-      (posts[1][1]?.body as FormData).get("inputId"),
-    );
-    expect(
-      fetchSpy.mock.calls.filter(
-        ([url, init]) => String(url) === "/api/chat/sessions" && init?.method === "POST",
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("keeps a new-chat draft entered while the first session POST is still pending", async () => {
-    const post = deferredResponse();
-    renderChatComponent(
-      {},
-      { sessions: [], projects: [], postTurn: () => post.promise },
-      "/chat",
-      true,
-    );
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "first message" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("chat-location").textContent).toContain("/chat/new-session"),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "New chat route" }));
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "second draft" } });
-    await act(async () => post.resolve(Response.json({ turnId: "turn-1" })));
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("second draft");
   });
 
   it("consumes each real navigation seed once, silently ignores conflicts, and allows a fresh seed after deletion", async () => {

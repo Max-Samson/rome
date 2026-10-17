@@ -77,8 +77,8 @@ import {
   findLastSubmission,
   hasPendingApprovalConfirmation,
 } from "@/components/chat/MessageList";
-import { DraftChatComposer } from "./DraftChatComposer";
 import {
+  ChatComposer,
   type ChatComposerHandle,
   type ChatComposerSendControls,
   type ChatComposerSnapshot,
@@ -279,6 +279,7 @@ export interface ChatProps {
    */
   centerDraftComposer?: boolean;
   /** Draft seeds for the composer, read when it mounts. */
+  draftSeed?: import("@/hooks/use-new-chat-draft").NewChatSeed;
   initialProjectName?: string;
   initialAgentMention?: AgentMention | null;
   /** Receives the composer's handle, for a host that seeds or focuses the draft. */
@@ -294,6 +295,7 @@ export function Chat({
   onSessionCreated,
   emptyState,
   centerDraftComposer = false,
+  draftSeed,
   initialProjectName,
   initialAgentMention,
   composerRef: hostComposerRef,
@@ -1273,6 +1275,7 @@ export function Chat({
       // the textarea (the original bug). So a failed submit rejects here; a
       // dropped stream never does.
       const result = await postTurn().catch((err: unknown) => {
+        if (!isMountedRef.current) throw err;
         // Transport failure posting the turn — a genuine failed submit.
         dropImmediateMessage();
         if (!wasLocallyStreaming) locallyStreamingSessionIdsRef.current.delete(sendingSessionId);
@@ -1284,6 +1287,7 @@ export function Chat({
         throw err;
       });
       if (!result.ok) {
+        if (!isMountedRef.current) throw new Error(result.message || "post turn failed");
         dropImmediateMessage();
         if (!wasLocallyStreaming) locallyStreamingSessionIdsRef.current.delete(sendingSessionId);
         setStreamReconnectRevision((revision) => revision + 1);
@@ -1389,16 +1393,18 @@ export function Chat({
           });
           sendingSessionId = created.id;
         } catch (error) {
-          setStreamError(
-            error instanceof ChatApiError && error.message
-              ? error.message
-              : t("stream.errors.createChatFallback"),
-          );
+          if (isMountedRef.current)
+            setStreamError(
+              error instanceof ChatApiError && error.message
+                ? error.message
+                : t("stream.errors.createChatFallback"),
+            );
           throw error;
         } finally {
           creatingSessionRef.current = false;
         }
-        controls.onSessionCreated?.(sendingSessionId);
+        if (!isMountedRef.current || controls.signal.aborted)
+          throw new DOMException("Cancelled draft", "AbortError");
         // The refs normally follow the render that adopts the session. The turn
         // below starts before that render, and its stream reads them to decide
         // which session's end counts as read and which may move the workspace.
@@ -2038,8 +2044,9 @@ export function Chat({
                       </Button>
                     </div>
                   ) : (
-                    <DraftChatComposer
-                      sessionId={mainSessionId}
+                    <ChatComposer
+                      persistNewChatDraft={!mainSessionId}
+                      draftSeed={draftSeed}
                       ref={composerRef}
                       // The box look lives on the composer now so the chip row can sit
                       // outside it; this mount adds the floating blur/translucency.
