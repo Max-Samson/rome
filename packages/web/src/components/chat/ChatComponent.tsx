@@ -56,10 +56,6 @@ export function ChatComponent({
   initialSkillName,
 }: ChatComponentProps) {
   const { i18n } = useTranslation("chat");
-  const navigate = useNavigate();
-  const location = useLocation();
-  const locationRef = useRef(location.key);
-  locationRef.current = location.key;
 
   const { data: settings } = useSettings();
   const coarsePointer = useCoarsePointer();
@@ -78,14 +74,6 @@ export function ChatComponent({
   const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
   const [draftKey, setDraftKey] = useState(0);
   const [previousSessionId, setPreviousSessionId] = useState(sessionId);
-  const [previousLocationKey, setPreviousLocationKey] = useState(location.key);
-  if (previousLocationKey !== location.key) {
-    setPreviousLocationKey(location.key);
-    if (!sessionId && !previousSessionId) {
-      setDraftKey((key) => key + 1);
-      setCreatedSessionId(null);
-    }
-  }
   if (sessionId !== previousSessionId) {
     setPreviousSessionId(sessionId);
     if (!sessionId && previousSessionId) {
@@ -98,28 +86,40 @@ export function ChatComponent({
   // sessionId already knows this surface created it and keeps the key.
   const handleSessionCreated = useCallback(
     (id: string) => {
-      if (locationRef.current !== location.key) return;
       setCreatedSessionId(id);
       onSessionCreated(id);
     },
-    [onSessionCreated, location.key],
+    [onSessionCreated],
   );
 
   const composerRef = useRef<ChatComposerHandle>(null);
-  const draftSeed = useMemo(
-    () => ({
-      intent: location.key,
-      ...(initialDraftText !== undefined ? { text: initialDraftText } : {}),
-      ...(initialProjectName ? { projectPath: initialProjectName } : {}),
-      ...(initialAgentMention ? { agentMention: initialAgentMention } : {}),
-      ...(initialSkillName ? { skill: { name: initialSkillName } } : {}),
-    }),
-    [location.key, initialDraftText, initialProjectName, initialAgentMention, initialSkillName],
-  );
-  // Run after prefill, and only on route entry, not on draft/metadata edits.
   useEffect(() => {
-    if (!sessionId) composerRef.current?.focus({ caret: "end", focus: !coarsePointer });
-  }, [location.key, sessionId, coarsePointer]);
+    if (!sessionId && !coarsePointer) composerRef.current?.focus();
+  }, [sessionId, coarsePointer]);
+
+  const navigate = useNavigate();
+  const location = useLocation();
+  useEffect(() => {
+    if (sessionId) return;
+    const hasTextOrSkill = initialDraftText !== undefined || initialSkillName !== undefined;
+    if (hasTextOrSkill) {
+      composerRef.current?.insertText(initialDraftText ?? "", { focus: !coarsePointer });
+      composerRef.current?.setSkillSelection(initialSkillName ? { name: initialSkillName } : null);
+    }
+    if (hasTextOrSkill || initialProjectName || initialAgentMention) {
+      navigate(location.pathname + location.search, { replace: true, state: null });
+    }
+  }, [
+    sessionId,
+    initialDraftText,
+    initialSkillName,
+    initialProjectName,
+    initialAgentMention,
+    coarsePointer,
+    navigate,
+    location.pathname,
+    location.search,
+  ]);
 
   const hideSidebar = new URLSearchParams(location.search).get("hideSidebar") === "1";
   const handleSessionNotFound = useCallback(
@@ -236,12 +236,13 @@ export function ChatComponent({
     (entry: ResolvedRomeNewsItem) => {
       switch (entry.type) {
         case "chat": {
+          composerRef.current?.setSkillSelection(
+            entry.skillName ? { name: entry.skillName } : null,
+          );
           if (entry.mode === "start") {
+            // Send immediately, carrying the composer's current selections.
             composerRef.current?.submit(entry.prompt, { skillName: entry.skillName });
           } else {
-            composerRef.current?.setSkillSelection(
-              entry.skillName ? { name: entry.skillName } : null,
-            );
             composerRef.current?.insertText(entry.prompt);
           }
           return;
@@ -271,7 +272,6 @@ export function ChatComponent({
         onSessionNotFound={handleSessionNotFound}
         onSessionMessage={onSessionMessage}
         onSessionCreated={handleSessionCreated}
-        draftSeed={draftSeed}
         initialProjectName={initialProjectName}
         initialAgentMention={initialAgentMention}
         composerRef={composerRef}
