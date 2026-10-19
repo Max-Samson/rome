@@ -56,6 +56,7 @@ import { WorkspaceContextChips } from "./composer/WorkspaceContextChips";
 import { useHorizontalScrollRail } from "./HorizontalScrollRail";
 import {
   clearNewChatDraft,
+  currentAuthEpoch,
   loadNewChatDraft,
   saveNewChatDraft,
 } from "@/lib/new-chat-draft-storage";
@@ -211,7 +212,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
 ) {
   const { t } = useTranslation("chat");
 
-  const [storedDraft] = useState(() => (persistNewChatDraft ? loadNewChatDraft() : null));
+  const [{ storedDraft, authEpoch }] = useState(() => {
+    const authEpoch = persistNewChatDraft ? currentAuthEpoch() : null;
+    return { authEpoch, storedDraft: persistNewChatDraft ? loadNewChatDraft() : null };
+  });
   const [inputText, setInputText] = useState(() => storedDraft?.text ?? "");
   const sessionCreatedRef = useRef(false);
   // The send-time clear must not re-save the unchanged context in its effect.
@@ -370,16 +374,20 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       skipNextDraftSaveRef.current = false;
       return;
     }
-    saveNewChatDraft({
-      version: 1,
-      text: inputText,
-      projectPath: draftProjectName,
-      agentMention: draftAgentMention,
-      skill: draftSkill,
-      personaId: selectedPersonId,
-    });
+    saveNewChatDraft(
+      {
+        version: 1,
+        text: inputText,
+        projectPath: draftProjectName,
+        agentMention: draftAgentMention,
+        skill: draftSkill,
+        personaId: selectedPersonId,
+      },
+      authEpoch,
+    );
   }, [
     persistNewChatDraft,
+    authEpoch,
     inputText,
     draftProjectName,
     draftAgentMention,
@@ -677,17 +685,24 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     } catch {
       discardSendOrigin(inputId);
       failedSendRef.current = { inputId, text, uploads, skill };
-      if (!textareaRef.current || (clearsOptimistically && textareaRef.current.value)) return;
+      if (
+        persistNewChatDraft &&
+        (!textareaRef.current || (clearsOptimistically && textareaRef.current.value))
+      )
+        return;
       // A failed turn in an adopted session belongs there, not in New chat.
       if (persistNewChatDraft && !sessionCreatedRef.current) {
-        saveNewChatDraft({
-          version: 1,
-          text: rawText,
-          projectPath: draftProjectName,
-          agentMention: draftAgentMention,
-          skill,
-          personaId: selectedPersonId,
-        });
+        saveNewChatDraft(
+          {
+            version: 1,
+            text: rawText,
+            projectPath: draftProjectName,
+            agentMention: draftAgentMention,
+            skill,
+            personaId: selectedPersonId,
+          },
+          authEpoch,
+        );
       }
       if (clearsOptimistically) {
         setInputText(persistNewChatDraft ? rawText : text);
@@ -699,6 +714,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     }
   }, [
     persistNewChatDraft,
+    authEpoch,
     inputText,
     pendingUploads,
     draftSkill,

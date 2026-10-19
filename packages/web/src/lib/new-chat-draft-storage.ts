@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_PROJECT_NAME } from "@/lib/chat-constants";
 import { randomUUID } from "./random-uuid";
 
 const KEY = "rome:new-chat-draft";
@@ -28,12 +29,20 @@ const schema = z.object({
 const recordSchema = schema.extend({ authEpoch: z.string().default("") });
 export type NewChatDraft = z.infer<typeof schema>;
 
+export function currentAuthEpoch(): string | null {
+  try {
+    return localStorage.getItem(AUTH_EPOCH_KEY) ?? "";
+  } catch {
+    return null;
+  }
+}
+
 export function loadNewChatDraft(): NewChatDraft | null {
   try {
     const result = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(KEY) ?? "null"));
     if (!result.success) return null;
     const { authEpoch, ...draft } = result.data;
-    if (authEpoch !== (localStorage.getItem(AUTH_EPOCH_KEY) ?? "")) {
+    if (authEpoch !== currentAuthEpoch()) {
       clearNewChatDraft();
       return null;
     }
@@ -43,10 +52,10 @@ export function loadNewChatDraft(): NewChatDraft | null {
   }
 }
 
-export function saveNewChatDraft(draft: NewChatDraft) {
+export function saveNewChatDraft(draft: NewChatDraft, authEpoch = currentAuthEpoch()) {
   if (
     !draft.text &&
-    draft.projectPath === "default" &&
+    draft.projectPath === DEFAULT_PROJECT_NAME &&
     !draft.agentMention &&
     !draft.skill &&
     !draft.personaId
@@ -55,10 +64,11 @@ export function saveNewChatDraft(draft: NewChatDraft) {
     return;
   }
   try {
-    sessionStorage.setItem(
-      KEY,
-      JSON.stringify({ ...draft, authEpoch: localStorage.getItem(AUTH_EPOCH_KEY) ?? "" }),
-    );
+    if (authEpoch === null || authEpoch !== currentAuthEpoch()) {
+      clearNewChatDraft();
+      return;
+    }
+    sessionStorage.setItem(KEY, JSON.stringify({ ...draft, authEpoch }));
   } catch {
     // Disabled storage must not break editing.
   }

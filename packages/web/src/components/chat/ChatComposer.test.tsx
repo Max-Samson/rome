@@ -26,6 +26,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   rs.restoreAllMocks();
   rs.unstubAllGlobals();
 });
@@ -801,6 +802,42 @@ describe("New chat draft", () => {
     expect([input().selectionStart, input().selectionEnd]).toEqual([2, 5]);
   });
 
+  it("does not save an old composer's edits after another tab changes auth", () => {
+    saveNewChatDraft(draft);
+    const first = renderComposer(
+      { persistNewChatDraft: true },
+      { settings: { enableImpersonation: true } },
+    );
+    expect(input().value).toBe(draft.text);
+    localStorage.setItem("rome:auth-epoch", "other-tab-logout");
+    fireEvent.input(input(), { target: { value: "edited old user's text" } });
+    expect(sessionStorage.getItem("rome:new-chat-draft")).toBeNull();
+    first.unmount();
+    renderComposer({ persistNewChatDraft: true });
+    expect(input().value).toBe("");
+  });
+
+  it("does not write a failed snapshot back after another tab changes auth", async () => {
+    const composerRef = createRef<ChatComposerHandle>();
+    let rejectSend!: (error: Error) => void;
+    renderComposer(
+      {
+        persistNewChatDraft: true,
+        onSend: () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectSend = reject;
+          }),
+      },
+      { composerRef },
+    );
+    act(() => composerRef.current?.addFiles([new File(["fixture"], "notes.txt")]));
+    fireEvent.input(input(), { target: { value: "old user's message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    localStorage.setItem("rome:auth-epoch", "other-tab-logout");
+    await act(async () => rejectSend(new Error("create failed")));
+    expect(sessionStorage.getItem("rome:new-chat-draft")).toBeNull();
+  });
+
   it("keeps deletion deleted on remount", () => {
     saveNewChatDraft({ ...empty, text: "delete me" });
     const first = renderComposer({ persistNewChatDraft: true });
@@ -939,6 +976,22 @@ describe("New chat draft", () => {
     await act(async () => reject(new Error("create failed")));
     expect(input().value).toBe("newer");
     expect(loadNewChatDraft()?.text).toBe("newer");
+  });
+
+  it("restores an existing-session send over newer text as on main", async () => {
+    let rejectSend!: (error: Error) => void;
+    renderComposer({
+      persistNewChatDraft: false,
+      onSend: () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    });
+    fireEvent.input(input(), { target: { value: "failed message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.input(input(), { target: { value: "newer text" } });
+    await act(async () => rejectSend(new Error("post failed")));
+    expect(input().value).toBe("failed message");
   });
 
   it("does not load or persist an existing-session composer's edits", () => {
