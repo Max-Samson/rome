@@ -840,6 +840,35 @@ describe("New chat draft", () => {
     expect(loadNewChatDraft()).toEqual(created ? null : draft);
   });
 
+  it("restores storage after an attachment send fails before session creation", async () => {
+    saveNewChatDraft(draft);
+    const composerRef = createRef<ChatComposerHandle>();
+    let rejectSend!: (error: Error) => void;
+    const first = renderComposer(
+      {
+        persistNewChatDraft: true,
+        onSend: () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectSend = reject;
+          }),
+      },
+      { composerRef, settings: { enableImpersonation: true } },
+    );
+    act(() => composerRef.current?.addFiles([new File(["fixture"], "notes.txt")]));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(input().value).toBe(draft.text);
+    expect(input().disabled).toBe(true);
+    expect(loadNewChatDraft()).toBeNull();
+    await act(async () => rejectSend(new Error("create failed")));
+    await waitFor(() => expect(loadNewChatDraft()).toEqual(draft));
+    expect(input().value).toBe(draft.text);
+    expect(input().disabled).toBe(false);
+    first.unmount();
+    renderComposer({ persistNewChatDraft: true }, { settings: { enableImpersonation: true } });
+    expect(input().value).toBe(draft.text);
+    expect(screen.queryByText("notes.txt")).toBeNull();
+  });
+
   it.each([
     false,
     true,

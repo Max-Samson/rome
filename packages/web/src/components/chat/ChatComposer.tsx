@@ -677,7 +677,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     } catch {
       discardSendOrigin(inputId);
       failedSendRef.current = { inputId, text, uploads, skill };
-      if (!textareaRef.current || textareaRef.current.value) return;
+      if (!textareaRef.current || (clearsOptimistically && textareaRef.current.value)) return;
       // A failed turn in an adopted session belongs there, not in New chat.
       if (persistNewChatDraft && !sessionCreatedRef.current) {
         saveNewChatDraft({
