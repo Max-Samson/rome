@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MemoryRouter, useLocation, useNavigationType } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import { romeNewsConfig } from "@/config/quick-entries";
@@ -70,9 +70,11 @@ rs.mock("@/components/chat/MessageList", () => ({
   hasPendingApprovalConfirmation: () => false,
 }));
 
-function LocationProbe() {
+function LocationProbe({ onWidgetsChange }: { onWidgetsChange: (widgets: unknown) => void }) {
   const location = useLocation();
   const navigationType = useNavigationType();
+  const widgets = location.state?.widgets;
+  useEffect(() => onWidgetsChange(widgets), [widgets, onWidgetsChange]);
   return (
     <output data-testid="chat-location" data-state={JSON.stringify(location.state)}>
       {location.pathname}
@@ -221,15 +223,16 @@ function renderChatComponent(
     return Response.json({}, { status: 404 });
   }) as typeof fetch);
 
+  const onWidgetsChange = rs.fn();
   const result = render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <ChatHost {...props} />
-        <LocationProbe />
+        <LocationProbe onWidgetsChange={onWidgetsChange} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  return { ...result, fetchSpy };
+  return { ...result, fetchSpy, onWidgetsChange };
 }
 
 describe("ChatComponent draft file drops", () => {
@@ -689,6 +692,30 @@ describe("New chat draft boundaries", () => {
     expect(screen.getByTestId("chat-location").getAttribute("data-state")).toBe("null");
     fireEvent.input(screen.getByRole("textbox"), { target: { value: "edited" } });
     expect(loadNewChatDraft()?.text).toBe("edited");
+  });
+
+  it("consumes only prefill keys without changing widgets or rerunning their effect", async () => {
+    const widgets = [{ type: "app", appId: "app" }];
+    const otherState = { widgets, futureKey: { keep: true } };
+    const { onWidgetsChange } = renderChatComponent({}, undefined, {
+      pathname: "/chat",
+      state: {
+        ...otherState,
+        draft: "explicit",
+        skill: "skill",
+        projectPath: "project",
+        agentMention: { appId: "app", agentName: "agent", appLabel: "App" },
+        agentName: "agent",
+      },
+    });
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId("chat-location").getAttribute("data-state")!)).toEqual(
+        otherState,
+      ),
+    );
+    expect(onWidgetsChange).toHaveBeenCalledTimes(1);
+    expect(onWidgetsChange.mock.calls[0][0]).toBe(widgets);
+    expect(loadNewChatDraft()?.text).toBe("explicit");
   });
 
   it("text-only prefill removes the saved skill", async () => {

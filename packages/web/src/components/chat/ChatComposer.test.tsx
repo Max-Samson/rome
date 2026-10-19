@@ -780,6 +780,27 @@ describe("New chat draft", () => {
     expect(loadNewChatDraft()).toEqual({ ...draft, text: "edited before settings" });
   });
 
+  it("focuses without moving the current selection after restoring the end caret", () => {
+    saveNewChatDraft(draft);
+    const composerRef = createRef<ChatComposerHandle>();
+    renderComposer({ persistNewChatDraft: true }, { composerRef });
+    expect([input().selectionStart, input().selectionEnd]).toEqual([
+      draft.text.length,
+      draft.text.length,
+    ]);
+    act(() => composerRef.current?.focus());
+    expect(document.activeElement).toBe(input());
+    expect([input().selectionStart, input().selectionEnd]).toEqual([
+      draft.text.length,
+      draft.text.length,
+    ]);
+    input().setSelectionRange(2, 5);
+    input().blur();
+    act(() => composerRef.current?.focus());
+    expect(document.activeElement).toBe(input());
+    expect([input().selectionStart, input().selectionEnd]).toEqual([2, 5]);
+  });
+
   it("keeps deletion deleted on remount", () => {
     saveNewChatDraft({ ...empty, text: "delete me" });
     const first = renderComposer({ persistNewChatDraft: true });

@@ -524,11 +524,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => {
-        const el = textareaRef.current;
-        el?.focus();
-        if (el) el.setSelectionRange(el.value.length, el.value.length);
-      },
+      focus: () => textareaRef.current?.focus(),
       insertText: (text: string, options?: { focus?: boolean }) => {
         if (uploadInFlightRef.current) return;
         setInputText(text);

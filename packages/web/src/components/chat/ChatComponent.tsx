@@ -107,7 +107,14 @@ export function ChatComponent({
       composerRef.current?.setSkillSelection(initialSkillName ? { name: initialSkillName } : null);
     }
     if (hasTextOrSkill || initialProjectName || initialAgentMention) {
-      navigate(location.pathname + location.search, { replace: true, state: null });
+      const state = { ...location.state };
+      const prefillKeys = ["draft", "skill", "projectPath", "agentMention", "agentName"];
+      if (!prefillKeys.some((key) => key in state)) return;
+      for (const key of prefillKeys) delete state[key];
+      navigate(location.pathname + location.search, {
+        replace: true,
+        state: Object.keys(state).length ? state : null,
+      });
     }
   }, [
     sessionId,
@@ -119,6 +126,7 @@ export function ChatComponent({
     navigate,
     location.pathname,
     location.search,
+    location.state,
   ]);
 
   const hideSidebar = new URLSearchParams(location.search).get("hideSidebar") === "1";
