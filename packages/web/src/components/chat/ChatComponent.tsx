@@ -108,16 +108,15 @@ export function ChatComponent({
         composerRef.current?.insertText(initialDraftText, { focus: !coarsePointer });
       composerRef.current?.setSkillSelection(initialSkillName ? { name: initialSkillName } : null);
     }
-    if (hasTextOrSkill || initialProjectName || initialAgentMention) {
-      const state = { ...location.state };
-      const prefillKeys = ["draft", "skill", "projectPath", "agentMention", "agentName"];
-      if (!prefillKeys.some((key) => key in state)) return;
-      for (const key of prefillKeys) delete state[key];
-      navigate(location.pathname + location.search, {
-        replace: true,
-        state: Object.keys(state).length ? state : null,
-      });
-    }
+    const state = { ...location.state };
+    // FreeGrid's effect consumes this render's widgets even after history state is stripped.
+    const prefillKeys = ["draft", "skill", "projectPath", "agentMention", "agentName", "widgets"];
+    if (!prefillKeys.some((key) => key in state)) return;
+    for (const key of prefillKeys) delete state[key];
+    navigate(location.pathname + location.search, {
+      replace: true,
+      state: Object.keys(state).length ? state : null,
+    });
   }, [
     sessionId,
     initialDraftText,

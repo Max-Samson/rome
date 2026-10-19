@@ -194,13 +194,11 @@ export function FreeGrid() {
   // task text plus an optional structured skill chip seeded by the Skills app.
   const initialDraftText = locState?.draft || undefined;
   const initialSkillName = locState?.skill || undefined;
+  const initialWidgets = locState?.widgets;
   const initialWidgetsKey = useMemo(() => {
-    const widgets = locState?.widgets;
-    if (!Array.isArray(widgets) || widgets.length === 0) return null;
-    return JSON.stringify(widgets);
-  }, [locState?.widgets]);
-  // History replacements clone state without changing the requested layout.
-  const initialWidgets = useMemo(() => locState?.widgets, [initialWidgetsKey]);
+    if (!Array.isArray(initialWidgets) || initialWidgets.length === 0) return null;
+    return JSON.stringify(initialWidgets);
+  }, [initialWidgets]);
   const [chatSessionId, setChatSessionId] = useState<string | undefined>(urlSessionId);
   const flushAppLink = useCallback(
     (p: WidgetPlacement) => {
