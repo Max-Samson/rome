@@ -1,5 +1,19 @@
 # @rome-os/app-runtime
 
+## [0.7.5](https://github.com/rome-os/rome/compare/app-runtime-v0.7.4...app-runtime-v0.7.5) (2026-10-16)
+
+
+### Features
+
+* **app-runtime:** answer as an account's linked agent, and keep an unlinked account silent ([#1101](https://github.com/rome-os/rome/issues/1101)) ([bae6b6f](https://github.com/rome-os/rome/commit/bae6b6fb1389c05a53611736747151875fffbc03))
+
+## [0.7.4](https://github.com/rome-os/rome/compare/app-runtime-v0.7.3...app-runtime-v0.7.4) (2026-10-16)
+
+
+### Features
+
+* **core:** add another account of a service ([#1067](https://github.com/rome-os/rome/issues/1067)) ([01e41c6](https://github.com/rome-os/rome/commit/01e41c62774f6447227f40010f5139fc20cf46d6))
+
 ## [0.7.3](https://github.com/rome-os/rome/compare/app-runtime-v0.7.2...app-runtime-v0.7.3) (2026-10-11)
 
 

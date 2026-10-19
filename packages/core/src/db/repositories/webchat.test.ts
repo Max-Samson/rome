@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import { eq, sql } from "drizzle-orm";
-import { createTestDb, type TestDb } from "../../test/helpers.js";
+import { createTestDb, type TestDb, identityServiceOf } from "../../test/helpers.js";
 import { ApprovalsRepository } from "./approvals.js";
+import { PersonMappingRepository } from "./person-mapping.js";
 import { ConversationSettingsRepository } from "../../conversation-settings/repository.js";
 import type { DrizzleDb } from "../index.js";
 import { romeAgentMessages, romeSessions, romeAgentTraceBlocks } from "../schema.js";
 import {
+  INTERRUPTED_TURN_ERROR,
   WebChatRepository,
   channelConversationId,
   sessionAwaitingGuardian,
@@ -310,6 +312,140 @@ describe("WebChatRepository", () => {
     ).toEqual([
       { id: "first", turnId: "turn-a" },
       { id: "second", turnId: "turn-b" },
+    ]);
+  });
+
+  it("ends the turns a stopped process left open, however long Rome was down", async () => {
+    const start = (turnId: string) => ({ type: "turn_start", turnId, agent: "main" });
+    const end = (turnId: string) => ({
+      type: "turn_end",
+      turnId,
+      status: "completed",
+      durationMs: 1,
+    });
+    const trace = (sessionId: string, messageId: string, blocks: unknown[]) =>
+      repo.appendTraceBlocks({ messageId, sessionId, turnId: messageId, startSeq: 0, blocks });
+    for (const id of ["sess-crashed", "sess-done", "sess-second", "sess-old"]) {
+      await repo.createSession(id, id);
+    }
+    rs.useFakeTimers({ toFake: ["Date"] });
+    try {
+      rs.setSystemTime(new Date("2026-09-25T12:00:00Z"));
+      await trace("sess-old", "trace-old", [start("turn-old"), { type: "text", content: "…" }]);
+      rs.setSystemTime(new Date("2026-10-01T11:00:00Z"));
+      await trace("sess-crashed", "trace-crashed", [
+        start("turn-crashed"),
+        { type: "tool_use", id: "tu-1", tool: "execute_action", input: {} },
+      ]);
+      await trace("sess-done", "trace-done", [start("turn-done"), end("turn-done")]);
+      await trace("sess-second", "trace-second", [start("turn-1"), end("turn-1"), start("turn-2")]);
+    } finally {
+      rs.useRealTimers();
+    }
+
+    // Rome comes back with real timers, weeks after these traces: the window
+    // counts from the newest trace, not from now.
+    const day = 24 * 60 * 60 * 1000;
+    await expect(repo.endInterruptedTurns(day)).resolves.toBe(2);
+
+    const blocks = async (sessionId: string) =>
+      JSON.parse((await repo.getTraceContents(sessionId))[0]!.content) as Record<string, unknown>[];
+    expect((await blocks("sess-crashed")).slice(-2)).toEqual([
+      { type: "error", error: INTERRUPTED_TURN_ERROR, agent: "main" },
+      {
+        type: "turn_end",
+        turnId: "turn-crashed",
+        status: "error",
+        durationMs: 0,
+        agent: "main",
+      },
+    ]);
+    expect((await blocks("sess-second")).at(-1)).toMatchObject({
+      type: "turn_end",
+      turnId: "turn-2",
+      status: "error",
+    });
+    expect(await blocks("sess-done")).toHaveLength(2);
+    expect(await blocks("sess-old")).toHaveLength(2);
+
+    const failed = Object.fromEntries(
+      (await repo.listSessions()).map((row) => [row.id, row.lastTurnFailed]),
+    );
+    expect(failed).toMatchObject({
+      "sess-crashed": true,
+      "sess-second": true,
+      "sess-done": false,
+      "sess-old": false,
+    });
+    await expect(repo.endInterruptedTurns(day)).resolves.toBe(0);
+  });
+
+  it("fails the subagents an interrupted turn was still waiting on", async () => {
+    const call = (toolUseId: string, agentName: string) => ({
+      toolUseId,
+      agentName,
+      sessionId: `child-${toolUseId}`,
+      turnId: `child-turn-${toolUseId}`,
+    });
+    const started = (toolUseId: string, agentName: string) => ({
+      type: "subagent_start",
+      ...call(toolUseId, agentName),
+      input: { prompt: "Look it up" },
+      agent: "main",
+    });
+    await repo.createSession("sess-parent", "Parent");
+    await repo.appendTraceBlocks({
+      messageId: "trace-parent",
+      sessionId: "sess-parent",
+      turnId: "trace-parent",
+      startSeq: 0,
+      blocks: [
+        // A turn that already ended keeps what it recorded.
+        { type: "turn_start", turnId: "turn-1", agent: "main" },
+        started("tu-earlier", "assistant:explore"),
+        { type: "turn_end", turnId: "turn-1", status: "error", durationMs: 5 },
+        { type: "turn_start", turnId: "turn-2", agent: "main" },
+        started("tu-done", "assistant:explore"),
+        started("tu-explore", "assistant:explore"),
+        {
+          type: "subagent_result",
+          ...call("tu-done", "assistant:explore"),
+          status: "completed",
+          output: "notes",
+          agent: "main",
+        },
+        started("tu-assistant", "assistant:assistant"),
+      ],
+    });
+
+    const day = 24 * 60 * 60 * 1000;
+    await expect(repo.endInterruptedTurns(day)).resolves.toBe(1);
+
+    const blocks = async () =>
+      JSON.parse((await repo.getTraceContents("sess-parent"))[0]!.content) as Record<
+        string,
+        unknown
+      >[];
+    const failed = (toolUseId: string, agentName: string) => ({
+      type: "subagent_result",
+      ...call(toolUseId, agentName),
+      status: "failed",
+      error: { message: INTERRUPTED_TURN_ERROR },
+      agent: "main",
+    });
+    expect((await blocks()).slice(-4)).toEqual([
+      failed("tu-explore", "assistant:explore"),
+      failed("tu-assistant", "assistant:assistant"),
+      { type: "error", error: INTERRUPTED_TURN_ERROR, agent: "main" },
+      { type: "turn_end", turnId: "turn-2", status: "error", durationMs: 0, agent: "main" },
+    ]);
+
+    await expect(repo.endInterruptedTurns(day)).resolves.toBe(0);
+    const results = (await blocks()).filter((block) => block.type === "subagent_result");
+    expect(results.map((block) => block.toolUseId)).toEqual([
+      "tu-done",
+      "tu-explore",
+      "tu-assistant",
     ]);
   });
 
@@ -1519,7 +1655,10 @@ describe("WebChatRepository", () => {
       await repo.addMessage("m-7", "sess-bad", "assistant", "not json");
       await repo.addMessage("m-8", "sess-bad", "assistant", '"plain text"');
       await repo.addMessage("m-9", "sess-bad", "assistant", '["plain text"]');
-      const approvals = new ApprovalsRepository(testDb.db);
+      const approvals = new ApprovalsRepository(
+        testDb.db,
+        new PersonMappingRepository(testDb.db, identityServiceOf),
+      );
       const approval = (sessionId: string, status?: "approved") =>
         approvals.create({
           type: "action_execution",

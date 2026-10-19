@@ -207,7 +207,9 @@ export function makeTelegramDescriptor(deps: TelegramDescriptorDeps = {}): Conne
 
   return {
     service: "telegram",
+    severalAccounts: true,
     reviveProfile: (_grant, record) => reviveTelegramProfile(record),
+    accountIdOf: (_grant, record) => (typeof record.botId === "string" && record.botId) || null,
     auth: {
       bot: botScheme,
     },
@@ -237,6 +239,7 @@ export function makeTelegramDescriptor(deps: TelegramDescriptorDeps = {}): Conne
             // A Telegram private chat carries the user's own id as its chat
             // id, so the address is already the conversation.
             directMessaging: addressIsConversationFeature(),
+            replyDelivery: adapter.replyDelivery(),
           };
           return {
             start(deliver, fault): void {

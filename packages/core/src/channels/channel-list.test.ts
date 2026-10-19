@@ -11,11 +11,14 @@ import { ConnectionRegistry } from "../connections/registry.js";
 import { DrizzleGrantLedger } from "../connections/ledger-db.js";
 import { tokenPaste } from "../connections/schemes.js";
 import type { Connection, ConnectionDescriptor, Talker } from "../connections/types.js";
-import { createTestDb, type TestDb } from "../test/helpers.js";
+import { createTestDb, serviceChannelOf, type TestDb } from "../test/helpers.js";
 import type { Accounts } from "./accounts.js";
 import { ChannelNotConnected } from "./channel.js";
-import { channelList } from "./channel-list.js";
+import { channelList, joinLaterChannel } from "./channel-list.js";
 import type { ConnectionPortsDeps } from "./connection-ports.js";
+import { ConnectionPacing } from "./delivery/connection-pacing.js";
+import { type DeliveryTransport, plainText } from "./delivery/types.js";
+import { systemClock } from "../lib/clock.js";
 
 const noAccounts: Accounts = {
   listAccounts: async () => ({ accounts: [] }),
@@ -44,6 +47,7 @@ function talkService(
   activity: ChannelActivity | null = null,
   history: TalkHistory | null = null,
   directory: TalkDirectory | null = null,
+  replyDelivery: DeliveryTransport | null = null,
 ): { descriptor: ConnectionDescriptor; epochs: Array<{ deliver?: (m: ChannelMessage) => void }> } {
   const epochs: Array<{ deliver?: (m: ChannelMessage) => void }> = [];
   return {
@@ -70,6 +74,7 @@ function talkService(
               ...(activity && { activity }),
               ...(history && { history }),
               ...(directory && { directory }),
+              ...(replyDelivery && { replyDelivery }),
             };
           },
         },
@@ -123,7 +128,12 @@ describe("channelList", () => {
       db: testDb.db,
       whatsAppAccounts: noAccounts,
       linkedInAccounts: noAccounts,
-      connections: { registry: watched, admit, ...(admission ? { admission } : {}) },
+      connections: {
+        registry: watched,
+        admit,
+        channelOf: serviceChannelOf,
+        ...(admission ? { admission } : {}),
+      },
       ...(connectionAccounts ? { connectionAccounts } : {}),
     });
     return { registry, channels, subscribed };
@@ -590,5 +600,85 @@ describe("channelList", () => {
     service.epochs[0]!.deliver?.(message({ messageId: "first" }));
     service.epochs[0]!.deliver?.(message({ messageId: "second" }));
     await rs.waitFor(() => expect(heard).toEqual(["first", "second"]));
+  });
+});
+
+describe("joinLaterChannel", () => {
+  let testDb: TestDb | undefined;
+  afterEach(() => testDb?.close());
+
+  it("joins a second Connection's channel once, and its first message reaches a subscriber once", async () => {
+    testDb = createTestDb();
+    const service = talkService("telegram");
+    const registry = new ConnectionRegistry({ ledger: new DrizzleGrantLedger(testDb.db) });
+    registry.register(service.descriptor);
+    const first = await registry.connect("telegram");
+    const channelOf = (connection: Pick<Connection, "id" | "service">) =>
+      connection.id === first.id ? "telegram" : `later-${connection.id}`;
+    const admit = async () => true;
+    const channels = channelList({
+      db: testDb.db,
+      whatsAppAccounts: noAccounts,
+      linkedInAccounts: noAccounts,
+      connections: { registry, admit, channelOf },
+    });
+    // What index.ts does: every channel a Talk unlock adds, the hook hears.
+    const joined: string[] = [];
+    const heard: InboundEvent[] = [];
+    registry.onUnlocked("talk", (connection) => {
+      const channel = joinLaterChannel({ registry, admit, channelOf, channels }, connection);
+      if (!channel) return;
+      joined.push(channel.name);
+      channel.inbound!.subscribe(async (event) => {
+        heard.push(event);
+      });
+    });
+    const grant = { material: { token: "t" }, expiresAt: "never" as const };
+
+    await registry.importCredential(first.id, "bot", grant);
+    expect(joined).toEqual([]);
+
+    const second = await registry.connectAnother("telegram");
+    await registry.importCredential(second.id, "bot", grant);
+    expect(joined).toEqual([`later-${second.id}`]);
+    service.epochs[1]!.deliver?.(message({ messageId: "to the second bot" }));
+
+    await rs.waitFor(() => expect(heard).toHaveLength(1));
+    expect(heard[0]?.message.channel).toBe(`later-${second.id}`);
+    expect(heard[0]?.ref.connectionId).toBe(second.id);
+    // A second attachment would deliver each message twice.
+    service.epochs[1]!.deliver?.(message({ messageId: "next" }));
+    await rs.waitFor(() =>
+      expect(heard.map((event) => event.message.messageId)).toEqual(["to the second bot", "next"]),
+    );
+    expect(channels.filter((channel) => channel.name === `later-${second.id}`)).toHaveLength(1);
+  });
+
+  it("paces a later channel's writes with its Connection's pacer, so its replies can stream", async () => {
+    testDb = createTestDb();
+    const service = talkService("telegram", {}, null, null, null, null, {
+      capabilities: {
+        maxPartLength: 10,
+        edit: false,
+        budget: { burst: 1, refillMs: 1, conversationSpacingMs: 0 },
+      },
+      codec: plainText,
+      create: async () => ({ messageId: "m", conversationId: "c" }),
+    });
+    const registry = new ConnectionRegistry({ ledger: new DrizzleGrantLedger(testDb.db) });
+    registry.register(service.descriptor);
+    const connection = await registry.connect("telegram");
+    await registry.importCredential(connection.id, "bot", {
+      material: { token: "t" },
+      expiresAt: "never",
+    });
+    const pacing = new ConnectionPacing(systemClock, async () => true);
+
+    const channel = joinLaterChannel(
+      { registry, admit: async () => true, channelOf: () => "later", pacing, channels: [] },
+      connection,
+    );
+
+    expect(channel?.send?.replies?.pacer).toBe(pacing.pacerFor(connection));
   });
 });

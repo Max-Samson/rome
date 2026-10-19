@@ -788,6 +788,27 @@ export interface TurnEndEvent {
    *  `accounting.durationMs` on the terminal event, which is the
    *  provider's self-reported per-call duration. */
   durationMs: number;
+  /**
+   * How the host delivered the reply as it was written, for a run started
+   * with `streamReply`, and only when the host streamed it. Absent, the host
+   * did not stream the reply and its caller sends it.
+   */
+  replyDelivery?: ReplyDeliveryReport;
+}
+
+/** A streamed reply's outcome, as `turn_end` reports it. */
+export interface ReplyDeliveryReport {
+  /**
+   * `delivered`: every message settled. `partial`: some messages were sent
+   * before a failure. `failed`: none was. `unknown`: a message may or may not
+   * have been sent. `stopped`: the run was stopped. Only `failed` leaves the
+   * reply safe to send again. The host records what the reply showed or may
+   * have shown in the conversation's history, so a `failed` reply leaves
+   * nothing recorded.
+   */
+  status: "delivered" | "partial" | "failed" | "unknown" | "stopped";
+  /** The platform ids of the messages the reply shows, in order. */
+  messageIds: string[];
 }
 
 export interface TextBlockEvent {
@@ -1188,6 +1209,19 @@ export interface RunParams {
   platformMessageId?: string;
   /** Platform message referenced by the current ordinary reply. */
   replyTo?: MessageReplyReference;
+  /**
+   * Ask the host to deliver the reply into `threadContext`'s conversation as
+   * it is written, answering `platformMessageId`. The host does so only when
+   * the instance has reply streaming on and the channel can stream, and then
+   * reports the outcome in `turn_end.replyDelivery`. Without that report, the
+   * caller sends the reply.
+   *
+   * A streamed reply is the turn's answer in the conversation's history. The
+   * host records it there in place of the run's transcript. A reply reported
+   * `failed` recorded nothing, so the caller sends the reply and records it,
+   * as `send_message` does.
+   */
+  streamReply?: boolean;
   /** Explicit session ID to continue */
   sessionId?: string;
   /** Variable content appended to the end of the system prompt */
@@ -1911,7 +1945,22 @@ export interface ChannelMessageHookDeps {
   actionEngine: ActionEngineLike;
   conversationSettings: ConversationSettingsControl;
   chatStop: ChatStopHandler;
+  /** A live array: the host appends a channel added later, such as a second
+   *  bot, in place. Read it at each `register()` rather than keep a copy. */
   channels: readonly Channel[];
+  /**
+   * Who answers on the channel named `channelName`, read when each message
+   * arrives, since a relink changes it on the same channel:
+   * - a canonical agent id (`<app-id>:<local-name>`, `core:main` for main):
+   *   that agent answers, except in a group or channel that chose its own agent;
+   * - null: the channel takes a linked agent but has none, or that agent is
+   *   not loaded, so nothing answers;
+   * - undefined: the channel takes no linked agent, such as webchat or email,
+   *   and its conversations choose their agent, main by default.
+   * A host that predates linked agents passes no `linkedAgentOf`, which reads
+   * as undefined for every channel.
+   */
+  linkedAgentOf?: (channelName: string) => string | null | undefined;
 }
 
 export interface ChannelMessageHook {
@@ -1921,6 +1970,14 @@ export interface ChannelMessageHook {
    *  subscription follows whatever backs it, so the host never calls the hook
    *  per Connection. */
   register(): Promise<void>;
+  /** Subscribe to `channels`, which the host has just appended to the deps'
+   *  `channels`, such as a second bot whose Talk first unlocked. The host
+   *  calls it only on a hook that defines it. On a hook without it, the host
+   *  calls `unregister()` then `register()` at once, which drops events still
+   *  waiting on the hook's existing subscriptions. A hook with neither
+   *  `addChannels` nor `unregister()` hears those channels only after the
+   *  next restart. */
+  addChannels?(channels: readonly Channel[]): Promise<void>;
   /** Detach every subscription `register` took out, so
    * the host can swap in a replacement instance (e.g. after an app-keys
    * environment change) without double-handling inbound messages. A hook

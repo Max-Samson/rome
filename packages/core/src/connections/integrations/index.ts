@@ -62,6 +62,10 @@ export interface BuiltinConnectionDeps {
   linkedinPoll: { minIntervalMs: number; maxIntervalMs: number };
   /** Loaded-agent lister (Discord/Feishu agent-binding validation + autocomplete). */
   listAgents: () => string[];
+  /** The agent linked to a Connection's channel (Discord/Feishu in-chat settings). */
+  linkedAgentOf?: (connectionId: string) => string | null | undefined;
+  /** Whether an agent is loaded, aliases included. */
+  hasAgent?: (name: string) => boolean;
   /** Guardian auto-map on WhatsApp connect (canonical self JID → channel mapping). */
   onWhatsAppGuardianConnected: (selfJid: string) => void;
   /** Rome Cloud mail client for the Email adapter. */
@@ -98,6 +102,8 @@ export function registerBuiltinConnections(
       chatStop: deps.chatStop,
       personMappingRepo: deps.personMappingRepo,
       listAgents: deps.listAgents,
+      linkedAgentOf: deps.linkedAgentOf,
+      hasAgent: deps.hasAgent,
     }),
   );
   registry.register(makeTelegramUserDescriptor());
@@ -115,6 +121,8 @@ export function registerBuiltinConnections(
       conversationSettings: deps.conversationSettings,
       personMappingRepo: deps.personMappingRepo,
       listAgents: deps.listAgents,
+      linkedAgentOf: deps.linkedAgentOf,
+      hasAgent: deps.hasAgent,
     }),
   );
   registry.register(

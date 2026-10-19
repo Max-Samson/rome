@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { AgentLoader } from "./agent-loader.js";
 import type { AppCatalog } from "../apps/catalog.js";
 import type { SessionManager } from "./session-manager.js";
+import type { ServiceOfChannel } from "../db/repositories/channel-records.js";
 import type { SessionsRepository } from "../db/repositories/sessions.js";
 import { findRecordedConversation, type SessionConversation } from "./session-conversation.js";
 import {
@@ -401,6 +402,9 @@ interface ManagerDeps {
   /** What the named channel's surface supports, or null for a name no channel
    *  has. A null result reads as a messaging channel. */
   channelSurface: (channel: string) => ChannelSurface | null;
+  /** The service behind a channel id. When absent, every channel id reads as
+   *  its own service, which holds only where no service has a second channel. */
+  serviceOfChannel?: ServiceOfChannel;
 }
 
 /** The parts of a channel's surface that change how its sessions prompt. */
@@ -1322,7 +1326,7 @@ async function openSession(
   // would resume through a path that cannot honor the detached surface, and
   // the first branch turn still carries its parent's delivery address.
   const deferEnabled =
-    isGuardianFacingChannel(key.channelThreadKey) &&
+    isGuardianFacingChannel(key.channelThreadKey, deps.serviceOfChannel) &&
     !opts.isSubagent &&
     !init.interactiveSurfaceDetached;
   const makeExecuteDefer =
@@ -1497,6 +1501,13 @@ async function openSession(
 
   const reasoningEffort = init.reasoningEffort ?? config.reasoningEffort;
 
+  // `isNewSession` tells the provider that `sessionId` was never handed to it.
+  // An existing row may already own a transcript under that id even with no
+  // recorded provider (a first turn cut off by a restart), and so does a
+  // session that already opened once (a switch away and back), so only a new
+  // row's first open is new.
+  let sessionIdUnused = isNewSession;
+
   const buildSessionParams = (
     resolution: ModelResolution,
     resumeProviderId?: string | null,
@@ -1515,9 +1526,10 @@ async function openSession(
     maxTurns: config.maxTurns,
     reasoningEffort,
     workingDir,
+    channel: sessionKeyChannel(key.channelThreadKey),
     externalMcpServers,
     sessionId,
-    isNewSession: resumeProviderId !== resolution.modelProvider.id,
+    isNewSession: sessionIdUnused,
     providerThreadId: resumeProviderId === resolution.modelProvider.id ? resumeThreadId : undefined,
     executeAction,
     executeSubagent,
@@ -1540,7 +1552,8 @@ async function openSession(
     resumeThreadId?: string,
   ): Promise<ModelSession> => {
     const params = buildSessionParams(resolution, resumeProviderId, resumeThreadId);
-    const resumed = params.isNewSession === false;
+    sessionIdUnused = false;
+    const resumed = params.providerThreadId !== undefined;
     const openStartMs = Date.now();
     const session = await withRomeSpan(
       "model.session.open",

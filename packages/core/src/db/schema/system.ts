@@ -14,6 +14,7 @@ import type { OutboxMessage } from "@rome/api-types/people";
 import type { SessionActor } from "../../lib/session-actor.js";
 import type { UsageEvent } from "../../usage/events.js";
 import { TURN_FEEDBACK_RATINGS } from "@rome/api-types/trace-segments";
+import { MAIN_AGENT_ID } from "@rome/api-types/linked-agents";
 import {
   APPROVAL_EXECUTION_STATES,
   APPROVAL_STATUSES,
@@ -865,17 +866,43 @@ export const executionJournal = sqliteTable(
   ],
 );
 
-// One row per minted Connection. The many-to-many grant ledger lives in
-// `connection_grants` below, keyed by custody (the connectionId).
-export const connections = sqliteTable(
-  "connections",
+// One row per minted Connection. A Service may hold several. The many-to-many
+// grant ledger lives in `connection_grants` below, keyed by custody (the
+// connectionId).
+export const connections = sqliteTable("connections", {
+  id: text("id").primaryKey(),
+  service: text("service").notNull(),
+  label: text("label").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+// One row per channel a Connection backs: Rome's presence on a platform, with
+// an id minted once and never changed. The first channel of a service takes
+// the service's name as its id, and later ones get an opaque id. A row
+// outlives its Connection, unbacked and unlinked, so the service's next
+// Connection takes it back. `agent` is the linked agent's canonical id.
+// `platform` is stored, not derived on read, so the partial unique index can
+// hold that on one platform an agent other than main is linked to at most one
+// channel; a row keeps the platform it was minted on. Main is exempt, since
+// it answers a platform's bot and its signed-in user at once.
+export const channels = sqliteTable(
+  "channels",
   {
     id: text("id").primaryKey(),
     service: text("service").notNull(),
-    label: text("label").notNull(),
+    platform: text("platform").notNull(),
+    connectionId: text("connection_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    agent: text("agent"),
   },
-  (table) => [uniqueIndex("connections_service_unique").on(table.service)],
+  (table) => [
+    uniqueIndex("channels_connection_unique").on(table.connectionId),
+    uniqueIndex("channels_platform_agent_unique")
+      .on(table.platform, table.agent)
+      .where(
+        sql`${table.agent} IS NOT NULL AND ${table.agent} <> ${sql.raw(`'${MAIN_AGENT_ID}'`)}`,
+      ),
+  ],
 );
 
 // The grant ledger. Rows record outcomes only — never step/flow state
