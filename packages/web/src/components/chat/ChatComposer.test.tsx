@@ -781,6 +781,27 @@ describe("New chat draft", () => {
     expect(loadNewChatDraft()).toEqual({ ...draft, text: "edited before settings" });
   });
 
+  it.each([
+    "send",
+    "submit",
+  ])("includes the restored persona before settings resolve (%s)", async (method) => {
+    saveNewChatDraft(draft);
+    const composerRef = createRef<ChatComposerHandle>();
+    const onSend = rs.fn().mockResolvedValue(undefined);
+    renderComposer(
+      { persistNewChatDraft: true, onSend },
+      {
+        composerRef,
+        settingsPromise: new Promise<Record<string, unknown>>(() => {}),
+      },
+    );
+    expect(composerRef.current?.getMetadataSnapshot().personaId).toBe(draft.personaId);
+    if (method === "send") fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    else act(() => composerRef.current?.submit("Quick entry"));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0][0].personaId).toBe(draft.personaId);
+  });
+
   it("focuses without moving the current selection after restoring the end caret", () => {
     saveNewChatDraft(draft);
     const composerRef = createRef<ChatComposerHandle>();

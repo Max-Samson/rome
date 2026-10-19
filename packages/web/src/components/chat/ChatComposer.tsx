@@ -290,6 +290,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     () => storedDraft?.personaId ?? "",
   );
 
+  const personaId =
+    selectedPersonId && (impersonationEnabled || !settings) ? selectedPersonId : undefined;
+
   const [impersonationMenuOpen, setImpersonationMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
@@ -560,7 +563,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         const snapshot: ChatComposerSnapshot = {
           text: trimmed,
           uploads: pendingUploads,
-          personaId: impersonationEnabled && selectedPersonId ? selectedPersonId : undefined,
+          personaId,
           largeModelSelection:
             showModelSelector && modelSelectorEnabled ? largeModelSelection : undefined,
           reasoningEffort,
@@ -579,15 +582,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
           });
       },
       getMetadataSnapshot: () => ({
-        personaId: impersonationEnabled && selectedPersonId ? selectedPersonId : undefined,
+        personaId,
         reasoningEffort,
       }),
     }),
     [
       addPendingFiles,
       textareaMaxHeight,
-      impersonationEnabled,
-      selectedPersonId,
+      personaId,
       reasoningEffort,
       draftSkill,
       pendingUploads,
@@ -642,7 +644,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     const snapshot: ChatComposerSnapshot = {
       text,
       uploads,
-      personaId: impersonationEnabled && selectedPersonId ? selectedPersonId : undefined,
+      personaId,
       largeModelSelection:
         showModelSelector && modelSelectorEnabled ? largeModelSelection : undefined,
       reasoningEffort,
@@ -718,8 +720,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     inputText,
     pendingUploads,
     draftSkill,
-    impersonationEnabled,
-    selectedPersonId,
+    personaId,
     showModelSelector,
     modelSelectorEnabled,
     largeModelSelection,
