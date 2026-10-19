@@ -485,7 +485,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   }, []);
 
   const invokeOnSend = useCallback(
-    async (snapshot: ChatComposerSnapshot) => {
+    async (snapshot: ChatComposerSnapshot, clearDraftOnAdoption = false) => {
       const tracksUpload = snapshot.uploads.length > 0;
       const controller = new AbortController();
       if (tracksUpload) {
@@ -503,6 +503,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
           signal: controller.signal,
           onSessionCreated: () => {
             sessionCreatedRef.current = true;
+            if (clearDraftOnAdoption && textareaRef.current) clearNewChatDraft();
           },
         });
       } finally {
@@ -663,10 +664,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       setDraftSkill(null);
     }
     try {
-      await invokeOnSend(snapshot);
+      await invokeOnSend(snapshot, persistNewChatDraft);
       failedSendRef.current = null;
       if (!clearsOptimistically) {
-        if (persistNewChatDraft) skipNextDraftSaveRef.current = inputText !== "" || skill !== null;
         const sentIds = new Set(uploads.map((upload) => upload.id));
         setPendingUploads((current) => current.filter((upload) => !sentIds.has(upload.id)));
         setDraftSkill((current) => (current === skill ? null : current));
@@ -677,9 +677,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     } catch {
       discardSendOrigin(inputId);
       failedSendRef.current = { inputId, text, uploads, skill };
-      if (!textareaRef.current) return;
+      if (!textareaRef.current || textareaRef.current.value) return;
       // A failed turn in an adopted session belongs there, not in New chat.
-      if (persistNewChatDraft && !sessionCreatedRef.current && loadNewChatDraft()) return;
       if (persistNewChatDraft && !sessionCreatedRef.current) {
         saveNewChatDraft({
           version: 1,

@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { randomUUID } from "./random-uuid";
 
 const KEY = "rome:new-chat-draft";
+const AUTH_EPOCH_KEY = "rome:auth-epoch";
 const schema = z.object({
   version: z.literal(1),
   text: z.string(),
@@ -23,12 +25,19 @@ const schema = z.object({
     .nullable(),
   personaId: z.string(),
 });
+const recordSchema = schema.extend({ authEpoch: z.string().default("") });
 export type NewChatDraft = z.infer<typeof schema>;
 
 export function loadNewChatDraft(): NewChatDraft | null {
   try {
-    const result = schema.safeParse(JSON.parse(sessionStorage.getItem(KEY) ?? "null"));
-    return result.success ? result.data : null;
+    const result = recordSchema.safeParse(JSON.parse(sessionStorage.getItem(KEY) ?? "null"));
+    if (!result.success) return null;
+    const { authEpoch, ...draft } = result.data;
+    if (authEpoch !== (localStorage.getItem(AUTH_EPOCH_KEY) ?? "")) {
+      clearNewChatDraft();
+      return null;
+    }
+    return draft;
   } catch {
     return null;
   }
@@ -46,7 +55,10 @@ export function saveNewChatDraft(draft: NewChatDraft) {
     return;
   }
   try {
-    sessionStorage.setItem(KEY, JSON.stringify(draft));
+    sessionStorage.setItem(
+      KEY,
+      JSON.stringify({ ...draft, authEpoch: localStorage.getItem(AUTH_EPOCH_KEY) ?? "" }),
+    );
   } catch {
     // Disabled storage must not break editing.
   }
@@ -57,5 +69,15 @@ export function clearNewChatDraft() {
     sessionStorage.removeItem(KEY);
   } catch {
     // Disabled storage must not break editing or logout.
+  }
+}
+
+/** Invalidates drafts in every tab when they next load, without sharing their content. */
+export function invalidateNewChatDrafts() {
+  clearNewChatDraft();
+  try {
+    localStorage.setItem(AUTH_EPOCH_KEY, randomUUID());
+  } catch {
+    // Disabled storage must not break logout.
   }
 }

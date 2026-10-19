@@ -840,6 +840,61 @@ describe("New chat draft", () => {
     expect(loadNewChatDraft()).toEqual(created ? null : draft);
   });
 
+  it.each([
+    false,
+    true,
+  ])("clears in-flight edits on adoption only while the original composer is mounted (unmounted %s)", async (unmounted) => {
+    let adopt!: () => void;
+    const first = renderComposer({
+      persistNewChatDraft: true,
+      onSend: (_snapshot, controls) =>
+        new Promise<void>((resolve) => {
+          adopt = () => {
+            controls.onSessionCreated?.();
+            resolve();
+          };
+        }),
+    });
+    fireEvent.input(input(), { target: { value: "first send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    if (unmounted) {
+      first.unmount();
+      renderComposer({ persistNewChatDraft: true });
+    }
+    fireEvent.input(input(), { target: { value: "newer draft" } });
+    expect(loadNewChatDraft()?.text).toBe("newer draft");
+    await act(async () => adopt());
+    expect(input().value).toBe("newer draft");
+    expect(loadNewChatDraft()?.text ?? null).toBe(unmounted ? "newer draft" : null);
+  });
+
+  it("restores a failed create despite a context-only record from late settings", async () => {
+    saveNewChatDraft(draft);
+    let resolveSettings!: (settings: Record<string, unknown>) => void;
+    const settingsPromise = new Promise<Record<string, unknown>>((resolve) => {
+      resolveSettings = resolve;
+    });
+    let rejectCreate!: (error: Error) => void;
+    renderComposer(
+      {
+        persistNewChatDraft: true,
+        onSend: () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectCreate = reject;
+          }),
+      },
+      { settingsPromise },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(input().value).toBe("");
+    expect(loadNewChatDraft()).toBeNull();
+    await act(async () => resolveSettings({ enableImpersonation: false }));
+    await waitFor(() => expect(loadNewChatDraft()).toMatchObject({ text: "", personaId: "" }));
+    await act(async () => rejectCreate(new Error("create failed")));
+    expect(input().value).toBe(draft.text);
+    expect(loadNewChatDraft()).toMatchObject({ text: draft.text, personaId: "" });
+  });
+
   it("does not replace a newer draft on failure", async () => {
     let reject!: (error: Error) => void;
     renderComposer({
@@ -875,7 +930,10 @@ describe("New chat draft", () => {
   it("keeps an unrelated draft and selected skill/uploads when Rome News submits its own prompt", async () => {
     saveNewChatDraft(draft);
     const composerRef = createRef<ChatComposerHandle>();
-    const onSend = rs.fn().mockResolvedValue(undefined);
+    const onSend = rs.fn((_snapshot, controls: ChatComposerSendControls) => {
+      controls.onSessionCreated?.();
+      return Promise.resolve();
+    });
     renderComposer(
       { persistNewChatDraft: true, onSend },
       { composerRef, settings: { enableImpersonation: true } },

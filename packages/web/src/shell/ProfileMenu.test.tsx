@@ -18,6 +18,8 @@ afterEach(() => {
   cleanup();
   rs.restoreAllMocks();
   rs.unstubAllGlobals();
+  sessionStorage.clear();
+  localStorage.clear();
 });
 
 function LocationProbe() {
@@ -126,6 +128,7 @@ describe("ProfileMenu", () => {
       displayName: "Evan",
       avatarUrl: null,
     });
+    localStorage.setItem("rome:auth-epoch", "before-logout");
     saveNewChatDraft({
       version: 1,
       text: "private draft",
@@ -136,6 +139,9 @@ describe("ProfileMenu", () => {
     });
     sessionStorage.setItem("rome:pending-app-remix", "unrelated");
     const assign = rs.fn(() => {
+      expect(sessionStorage.getItem("rome:new-chat-draft")).toBeNull();
+      expect(localStorage.getItem("rome:auth-epoch")).toBeTruthy();
+      expect(localStorage.getItem("rome:auth-epoch")).not.toBe("before-logout");
       expect(loadNewChatDraft()).toBeNull();
       expect(sessionStorage.getItem("rome:pending-app-remix")).toBe("unrelated");
     });

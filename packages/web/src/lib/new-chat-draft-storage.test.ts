@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, rs } from "@rstest/core";
 import {
   clearNewChatDraft,
+  invalidateNewChatDrafts,
   loadNewChatDraft,
   saveNewChatDraft,
   type NewChatDraft,
@@ -17,7 +18,9 @@ const empty: NewChatDraft = {
 };
 afterEach(() => {
   rs.restoreAllMocks();
+  rs.unstubAllGlobals();
   sessionStorage.clear();
+  localStorage.clear();
 });
 
 describe("new-chat draft storage", () => {
@@ -32,9 +35,10 @@ describe("new-chat draft storage", () => {
     };
     saveNewChatDraft(draft);
     expect(loadNewChatDraft()).toEqual(draft);
-    expect(Object.keys(JSON.parse(sessionStorage.getItem("rome:new-chat-draft")!))).toEqual(
-      Object.keys(draft),
-    );
+    expect(JSON.parse(sessionStorage.getItem("rome:new-chat-draft")!)).toEqual({
+      ...draft,
+      authEpoch: "",
+    });
   });
   it.each([
     "oops",
@@ -56,6 +60,55 @@ describe("new-chat draft storage", () => {
     saveNewChatDraft({ ...empty, skill: { name: "skill" } });
     expect(loadNewChatDraft()?.skill).toEqual({ name: "skill" });
   });
+  it("accepts a missing epoch consistently until auth changes", () => {
+    const draft = { ...empty, text: "legacy draft" };
+    sessionStorage.setItem("rome:new-chat-draft", JSON.stringify(draft));
+    expect(loadNewChatDraft()).toEqual(draft);
+    localStorage.setItem("rome:auth-epoch", "signed-out");
+    expect(loadNewChatDraft()).toBeNull();
+    expect(sessionStorage.getItem("rome:new-chat-draft")).toBeNull();
+  });
+
+  it("stores the shared epoch and removes a draft when another tab changes it", () => {
+    localStorage.setItem("rome:auth-epoch", "first-login");
+    saveNewChatDraft({ ...empty, text: "private draft" });
+    expect(JSON.parse(sessionStorage.getItem("rome:new-chat-draft")!).authEpoch).toBe(
+      "first-login",
+    );
+    localStorage.setItem("rome:auth-epoch", "next-login");
+    expect(loadNewChatDraft()).toBeNull();
+    expect(sessionStorage.getItem("rome:new-chat-draft")).toBeNull();
+    saveNewChatDraft({ ...empty, text: "new user's draft" });
+    expect(loadNewChatDraft()?.text).toBe("new user's draft");
+  });
+
+  it("invalidates another tab's retained sessionStorage on its next load", () => {
+    saveNewChatDraft({ ...empty, text: "tab A private draft" });
+    const tabAStorage = sessionStorage;
+    const removeInTabB = rs.fn();
+    rs.stubGlobal("sessionStorage", { removeItem: removeInTabB });
+    invalidateNewChatDrafts();
+    expect(removeInTabB).toHaveBeenCalledWith("rome:new-chat-draft");
+    expect(localStorage.getItem("rome:auth-epoch")).toBeTruthy();
+    expect(tabAStorage.getItem("rome:new-chat-draft")).not.toBeNull();
+    rs.stubGlobal("sessionStorage", tabAStorage);
+    expect(loadNewChatDraft()).toBeNull();
+    expect(tabAStorage.getItem("rome:new-chat-draft")).toBeNull();
+  });
+
+  it("does not restore or persist content when the shared epoch cannot be read", () => {
+    saveNewChatDraft({ ...empty, text: "private draft" });
+    const previous = sessionStorage.getItem("rome:new-chat-draft");
+    rs.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+    });
+    expect(loadNewChatDraft()).toBeNull();
+    expect(() => saveNewChatDraft({ ...empty, text: "local edit" })).not.toThrow();
+    expect(sessionStorage.getItem("rome:new-chat-draft")).toBe(previous);
+  });
+
   it("tolerates disabled or full storage", () => {
     for (const method of ["getItem", "setItem", "removeItem"] as const)
       rs.spyOn(Storage.prototype, method).mockImplementation(() => {
@@ -65,5 +118,6 @@ describe("new-chat draft storage", () => {
     expect(() => saveNewChatDraft({ ...empty, text: "local" })).not.toThrow();
     expect(() => saveNewChatDraft(empty)).not.toThrow();
     expect(() => clearNewChatDraft()).not.toThrow();
+    expect(() => invalidateNewChatDrafts()).not.toThrow();
   });
 });
