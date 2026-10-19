@@ -103,7 +103,9 @@ export function ChatComponent({
     if (sessionId) return;
     const hasTextOrSkill = initialDraftText !== undefined || initialSkillName !== undefined;
     if (hasTextOrSkill) {
-      composerRef.current?.insertText(initialDraftText ?? "", { focus: !coarsePointer });
+      // A skill-only entry (the Skills app with a blank task) keeps the unsent text.
+      if (initialDraftText !== undefined)
+        composerRef.current?.insertText(initialDraftText, { focus: !coarsePointer });
       composerRef.current?.setSkillSelection(initialSkillName ? { name: initialSkillName } : null);
     }
     if (hasTextOrSkill || initialProjectName || initialAgentMention) {

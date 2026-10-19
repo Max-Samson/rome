@@ -734,6 +734,25 @@ describe("New chat draft boundaries", () => {
     expect(screen.queryByRole("button", { name: "Remove skill" })).toBeNull();
   });
 
+  it("skill-only prefill keeps the saved text", async () => {
+    saveNewChatDraft({
+      version: 1,
+      text: "unsent task",
+      projectPath: "default",
+      agentMention: null,
+      skill: null,
+      personaId: "",
+    });
+    renderChatComponent({}, undefined, { pathname: "/chat", state: { skill: "new-skill" } });
+    await waitFor(() =>
+      expect(loadNewChatDraft()).toMatchObject({
+        text: "unsent task",
+        skill: { name: "new-skill" },
+      }),
+    );
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("unsent task");
+  });
+
   it("does not resurrect a failed first turn after the session exists and a retry succeeds", async () => {
     let attempts = 0;
     renderChatComponent(
